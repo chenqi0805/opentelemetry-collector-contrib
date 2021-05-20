@@ -25,16 +25,17 @@ import (
 
 	"github.com/apache/thrift/lib/go/thrift"
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config/configmodels"
-	"go.opentelemetry.io/collector/consumer/consumerdata"
+	"go.opentelemetry.io/collector/config"
 	"go.opentelemetry.io/collector/consumer/consumererror"
+	"go.opentelemetry.io/collector/consumer/pdata"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
+	"go.opentelemetry.io/collector/translator/internaldata"
 )
 
 // Default timeout for http request in seconds
 const defaultHTTPTimeout = time.Second * 5
 
-// New returns a new Jaeger Thrift over HTTP exporter.
+// newTracesExporter returns a new Jaeger Thrift over HTTP exporter.
 // The exporterName is the name to be used in the observability of the exporter.
 // The httpAddress should be the URL of the collector to handle POST requests,
 // typically something like: http://hostname:14268/api/traces.
@@ -42,12 +43,13 @@ const defaultHTTPTimeout = time.Second * 5
 // collector.
 // The timeout is used to set the timeout for the HTTP requests, if the
 // value is equal or smaller than zero the default of 5 seconds is used.
-func New(
-	config configmodels.Exporter,
+func newTracesExporter(
+	config config.Exporter,
+	params component.ExporterCreateParams,
 	httpAddress string,
 	headers map[string]string,
 	timeout time.Duration,
-) (component.TraceExporterOld, error) {
+) (component.TracesExporter, error) {
 
 	clientTimeout := defaultHTTPTimeout
 	if timeout != 0 {
@@ -59,8 +61,9 @@ func New(
 		client:  &http.Client{Timeout: clientTimeout},
 	}
 
-	return exporterhelper.NewTraceExporterOld(
+	return exporterhelper.NewTracesExporter(
 		config,
+		params.Logger,
 		s.pushTraceData)
 }
 
@@ -73,49 +76,54 @@ type jaegerThriftHTTPSender struct {
 }
 
 func (s *jaegerThriftHTTPSender) pushTraceData(
-	ctx context.Context,
-	td consumerdata.TraceData,
-) (droppedSpans int, err error) {
+	_ context.Context,
+	td pdata.Traces,
+) error {
+	rss := td.ResourceSpans()
+	for i := 0; i < rss.Len(); i++ {
+		var octd traceData
+		octd.Node, octd.Resource, octd.Spans = internaldata.ResourceSpansToOC(rss.At(i))
 
-	tBatch, err := OCProtoToJaegerThrift(td)
-	if err != nil {
-		return len(td.Spans), consumererror.Permanent(err)
-	}
+		tBatch, err := oCProtoToJaegerThrift(octd)
+		if err != nil {
+			return consumererror.Permanent(err)
+		}
 
-	body, err := serializeThrift(tBatch)
-	if err != nil {
-		return len(td.Spans), err
-	}
+		body, err := serializeThrift(tBatch)
+		if err != nil {
+			return err
+		}
 
-	req, err := http.NewRequest("POST", s.url, body)
-	if err != nil {
-		return len(td.Spans), err
-	}
+		req, err := http.NewRequest("POST", s.url, body)
+		if err != nil {
+			return err
+		}
 
-	req.Header.Set("Content-Type", "application/x-thrift")
-	if s.headers != nil {
-		for k, v := range s.headers {
-			req.Header.Set(k, v)
+		req.Header.Set("Content-Type", "application/x-thrift")
+		if s.headers != nil {
+			for k, v := range s.headers {
+				req.Header.Set(k, v)
+			}
+		}
+
+		resp, err := s.client.Do(req)
+		if err != nil {
+			return err
+		}
+
+		io.Copy(ioutil.Discard, resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode >= http.StatusBadRequest {
+			err = fmt.Errorf(
+				"HTTP %d %q",
+				resp.StatusCode,
+				http.StatusText(resp.StatusCode))
+			return err
 		}
 	}
 
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return len(td.Spans), err
-	}
-
-	io.Copy(ioutil.Discard, resp.Body)
-	resp.Body.Close()
-
-	if resp.StatusCode >= http.StatusBadRequest {
-		err = fmt.Errorf(
-			"HTTP %d %q",
-			resp.StatusCode,
-			http.StatusText(resp.StatusCode))
-		return len(td.Spans), err
-	}
-
-	return 0, nil
+	return nil
 }
 
 func serializeThrift(obj thrift.TStruct) (*bytes.Buffer, error) {

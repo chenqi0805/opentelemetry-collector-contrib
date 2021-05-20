@@ -15,79 +15,125 @@
 package splunkhecexporter
 
 import (
+	"context"
 	"errors"
 	"time"
 
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config/configmodels"
-	"go.uber.org/zap"
+	"go.opentelemetry.io/collector/config"
+	"go.opentelemetry.io/collector/exporter/exporterhelper"
 )
 
 const (
 	// The value of "type" key in configuration.
-	typeStr = "splunk_hec"
-	// default values
-	defaultNumWorkers  uint = 8
-	defaultMaxIdleCons      = 100
-	defaultHTTPTimeout      = 10 * time.Second
+	typeStr            = "splunk_hec"
+	defaultMaxIdleCons = 100
+	defaultHTTPTimeout = 10 * time.Second
 )
 
-// Factory is the factory for Splunk HEC exporter.
-type Factory struct {
+// NewFactory creates a factory for Splunk HEC exporter.
+func NewFactory() component.ExporterFactory {
+	return exporterhelper.NewFactory(
+		typeStr,
+		createDefaultConfig,
+		exporterhelper.WithTraces(createTracesExporter),
+		exporterhelper.WithMetrics(createMetricsExporter),
+		exporterhelper.WithLogs(createLogsExporter))
 }
 
-// Type gets the type of the Exporter config created by this factory.
-func (f *Factory) Type() configmodels.Type {
-	return configmodels.Type(typeStr)
-}
-
-// CreateDefaultConfig creates the default configuration for exporter.
-func (f *Factory) CreateDefaultConfig() configmodels.Exporter {
+func createDefaultConfig() config.Exporter {
 	return &Config{
-		ExporterSettings: configmodels.ExporterSettings{
-			TypeVal: configmodels.Type(typeStr),
-			NameVal: typeStr,
+		ExporterSettings: config.NewExporterSettings(config.NewID(typeStr)),
+		TimeoutSettings: exporterhelper.TimeoutSettings{
+			Timeout: defaultHTTPTimeout,
 		},
-		Timeout:            defaultHTTPTimeout,
-		DisableCompression: false,
-		MaxConnections:     defaultMaxIdleCons,
+		RetrySettings:        exporterhelper.DefaultRetrySettings(),
+		QueueSettings:        exporterhelper.DefaultQueueSettings(),
+		DisableCompression:   false,
+		MaxConnections:       defaultMaxIdleCons,
+		MaxContentLengthLogs: maxContentLengthLogsLimit,
 	}
 }
 
-// CreateTraceExporter creates a trace exporter based on this config.
-func (f *Factory) CreateTraceExporter(
-	logger *zap.Logger,
-	config configmodels.Exporter,
-) (component.TraceExporterOld, error) {
+func createTracesExporter(
+	_ context.Context,
+	params component.ExporterCreateParams,
+	config config.Exporter,
+) (component.TracesExporter, error) {
 	if config == nil {
 		return nil, errors.New("nil config")
 	}
 	expCfg := config.(*Config)
 
-	exp, err := createExporter(expCfg, logger)
-
+	exp, err := createExporter(expCfg, params.Logger, &params.BuildInfo)
 	if err != nil {
 		return nil, err
 	}
 
-	return exp, nil
+	return exporterhelper.NewTracesExporter(
+		expCfg,
+		params.Logger,
+		exp.pushTraceData,
+		// explicitly disable since we rely on http.Client timeout logic.
+		exporterhelper.WithTimeout(exporterhelper.TimeoutSettings{Timeout: 0}),
+		exporterhelper.WithRetry(expCfg.RetrySettings),
+		exporterhelper.WithQueue(expCfg.QueueSettings),
+		exporterhelper.WithStart(exp.start),
+		exporterhelper.WithShutdown(exp.stop))
 }
 
-// CreateMetricsExporter creates a metrics exporter based on this config.
-func (f *Factory) CreateMetricsExporter(
-	logger *zap.Logger,
-	config configmodels.Exporter,
-) (component.MetricsExporterOld, error) {
+func createMetricsExporter(
+	_ context.Context,
+	params component.ExporterCreateParams,
+	config config.Exporter,
+) (component.MetricsExporter, error) {
 	if config == nil {
 		return nil, errors.New("nil config")
 	}
 	expCfg := config.(*Config)
 
-	exp, err := createExporter(expCfg, logger)
+	exp, err := createExporter(expCfg, params.Logger, &params.BuildInfo)
 
 	if err != nil {
 		return nil, err
 	}
 
-	return exp, nil
+	return exporterhelper.NewMetricsExporter(
+		expCfg,
+		params.Logger,
+		exp.pushMetricsData,
+		// explicitly disable since we rely on http.Client timeout logic.
+		exporterhelper.WithTimeout(exporterhelper.TimeoutSettings{Timeout: 0}),
+		exporterhelper.WithRetry(expCfg.RetrySettings),
+		exporterhelper.WithQueue(expCfg.QueueSettings),
+		exporterhelper.WithStart(exp.start),
+		exporterhelper.WithShutdown(exp.stop))
+}
+
+func createLogsExporter(
+	_ context.Context,
+	params component.ExporterCreateParams,
+	config config.Exporter,
+) (exporter component.LogsExporter, err error) {
+	if config == nil {
+		return nil, errors.New("nil config")
+	}
+	expCfg := config.(*Config)
+
+	exp, err := createExporter(expCfg, params.Logger, &params.BuildInfo)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return exporterhelper.NewLogsExporter(
+		expCfg,
+		params.Logger,
+		exp.pushLogData,
+		// explicitly disable since we rely on http.Client timeout logic.
+		exporterhelper.WithTimeout(exporterhelper.TimeoutSettings{Timeout: 0}),
+		exporterhelper.WithRetry(expCfg.RetrySettings),
+		exporterhelper.WithQueue(expCfg.QueueSettings),
+		exporterhelper.WithStart(exp.start),
+		exporterhelper.WithShutdown(exp.stop))
 }

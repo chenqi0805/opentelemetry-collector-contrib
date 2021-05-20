@@ -1,4 +1,4 @@
-// Copyright 2019, OpenTelemetry Authors
+// Copyright The OpenTelemetry Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,9 +19,10 @@ import (
 	"net/url"
 
 	sapmclient "github.com/signalfx/sapm-proto/client"
-	"go.opentelemetry.io/collector/config/configmodels"
+	"go.opentelemetry.io/collector/config"
+	"go.opentelemetry.io/collector/exporter/exporterhelper"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/common/splunk"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/splunk"
 )
 
 const (
@@ -31,7 +32,7 @@ const (
 
 // Config defines configuration for SAPM exporter.
 type Config struct {
-	configmodels.ExporterSettings `mapstructure:",squash"` // squash ensures fields are correctly decoded in embedded struct.
+	config.ExporterSettings `mapstructure:",squash"`
 
 	// Endpoint is the destination to where traces will be sent to in SAPM format.
 	// It must be a full URL and include the scheme, port and path e.g, https://ingest.signalfx.com/v2/trace
@@ -51,6 +52,10 @@ type Config struct {
 	DisableCompression bool `mapstructure:"disable_compression"`
 
 	splunk.AccessTokenPassthroughConfig `mapstructure:",squash"`
+
+	exporterhelper.TimeoutSettings `mapstructure:",squash"` // squash ensures fields are correctly decoded in embedded struct.
+	exporterhelper.QueueSettings   `mapstructure:"sending_queue"`
+	exporterhelper.RetrySettings   `mapstructure:"retry_on_failure"`
 }
 
 func (c *Config) validate() error {

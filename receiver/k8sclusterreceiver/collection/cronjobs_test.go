@@ -28,14 +28,14 @@ import (
 )
 
 func TestCronJobMetrics(t *testing.T) {
-	cj := NewCronJob("1")
+	cj := newCronJob("1")
 
 	actualResourceMetrics := getMetricsForCronJob(cj)
 
 	require.Equal(t, 1, len(actualResourceMetrics))
 
 	require.Equal(t, 1, len(actualResourceMetrics[0].metrics))
-	testutils.AssertResource(t, *actualResourceMetrics[0].resource, k8sType,
+	testutils.AssertResource(t, actualResourceMetrics[0].resource, k8sType,
 		map[string]string{
 			"k8s.cronjob.uid":    "test-cronjob-1-uid",
 			"k8s.cronjob.name":   "test-cronjob-1",
@@ -44,12 +44,12 @@ func TestCronJobMetrics(t *testing.T) {
 		},
 	)
 
-	testutils.AssertMetrics(t, *actualResourceMetrics[0].metrics[0], "k8s/cronjob/active_jobs",
+	testutils.AssertMetrics(t, actualResourceMetrics[0].metrics[0], "k8s.cronjob.active_jobs",
 		metricspb.MetricDescriptor_GAUGE_INT64, 2)
 }
 
 func TestCronJobMetadata(t *testing.T) {
-	cj := NewCronJob("1")
+	cj := newCronJob("1")
 
 	actualMetadata := getMetadataForCronJob(cj)
 
@@ -66,7 +66,7 @@ func TestCronJobMetadata(t *testing.T) {
 				"foo1":                       "",
 				"schedule":                   "schedule",
 				"concurrency_policy":         "concurrency_policy",
-				"k8s.workload.kind":          "cronjob",
+				"k8s.workload.kind":          "CronJob",
 				"k8s.workload.name":          "test-cronjob-1",
 			},
 		},
@@ -74,7 +74,7 @@ func TestCronJobMetadata(t *testing.T) {
 	)
 }
 
-func NewCronJob(id string) *batchv1beta1.CronJob {
+func newCronJob(id string) *batchv1beta1.CronJob {
 	return &batchv1beta1.CronJob{
 		ObjectMeta: v1.ObjectMeta{
 			Name:        "test-cronjob-" + id,

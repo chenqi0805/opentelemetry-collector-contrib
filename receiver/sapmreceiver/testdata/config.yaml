@@ -11,7 +11,7 @@ receivers:
 
   # The following demonstrates how to specify TLS for the receiver.
   sapm/tls:
-    tls:
+    tls_settings:
       cert_file: /test.crt
       key_file: /test.key
 
@@ -20,15 +20,15 @@ receivers:
 
 
 processors:
-  exampleprocessor:
+  nop:
 
 exporters:
-  exampleexporter:
+  nop:
 
 service:
   pipelines:
     traces:
      receivers: [sapm]
-     processors: [exampleprocessor]
-     exporters: [exampleexporter]
+     processors: [nop]
+     exporters: [nop]
 

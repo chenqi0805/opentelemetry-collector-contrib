@@ -18,8 +18,8 @@ import (
 	"context"
 
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config/configerror"
-	"go.opentelemetry.io/collector/config/configmodels"
+	"go.opentelemetry.io/collector/config"
+	"go.opentelemetry.io/collector/exporter/exporterhelper"
 )
 
 const (
@@ -27,42 +27,34 @@ const (
 	typeStr = "elastic"
 )
 
-// Factory is the factory for Elastic exporter.
-type Factory struct {
+// NewFactory creates a factory for Elastic exporter.
+func NewFactory() component.ExporterFactory {
+	return exporterhelper.NewFactory(
+		typeStr,
+		createDefaultConfig,
+		exporterhelper.WithTraces(createTracesExporter),
+		exporterhelper.WithMetrics(createMetricsExporter),
+	)
 }
 
-// Type gets the type of the Exporter config created by this factory.
-func (f *Factory) Type() configmodels.Type {
-	return configmodels.Type(typeStr)
-}
-
-// CreateDefaultConfig creates the default configuration for exporter.
-func (f *Factory) CreateDefaultConfig() configmodels.Exporter {
+func createDefaultConfig() config.Exporter {
 	return &Config{
-		ExporterSettings: configmodels.ExporterSettings{
-			TypeVal: configmodels.Type(typeStr),
-			NameVal: typeStr,
-		},
+		ExporterSettings: config.NewExporterSettings(config.NewID(typeStr)),
 	}
 }
 
-// CreateTraceExporter creates a trace exporter based on this config.
-func (f *Factory) CreateTraceExporter(
+func createTracesExporter(
 	ctx context.Context,
 	params component.ExporterCreateParams,
-	cfg configmodels.Exporter,
-) (component.TraceExporter, error) {
-	return newElasticTraceExporter(params, cfg)
+	cfg config.Exporter,
+) (component.TracesExporter, error) {
+	return newElasticTracesExporter(params, cfg)
 }
 
-// CreateMetricsExporter returns configerror.ErrDataTypeIsNotSupported.
-func (f *Factory) CreateMetricsExporter(
+func createMetricsExporter(
 	ctx context.Context,
 	params component.ExporterCreateParams,
-	cfg configmodels.Exporter,
+	cfg config.Exporter,
 ) (component.MetricsExporter, error) {
-	// TODO(axw) pdata.Metrics can not currently be translated to
-	// the OTLP representation outside of the core repo. Once it can
-	// be, we can export metrics too.
-	return nil, configerror.ErrDataTypeIsNotSupported
+	return newElasticMetricsExporter(params, cfg)
 }

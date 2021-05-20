@@ -20,32 +20,33 @@ import (
 	"go.opentelemetry.io/collector/translator/conventions"
 	appsv1 "k8s.io/api/apps/v1"
 
+	metadata "github.com/open-telemetry/opentelemetry-collector-contrib/pkg/experimentalmetricmetadata"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/k8sclusterreceiver/utils"
 )
 
 var daemonSetCurrentScheduledMetric = &metricspb.MetricDescriptor{
-	Name:        "k8s/daemon_set/current_scheduled_nodes",
+	Name:        "k8s.daemonset.current_scheduled_nodes",
 	Description: "Number of nodes that are running at least 1 daemon pod and are supposed to run the daemon pod",
 	Unit:        "1",
 	Type:        metricspb.MetricDescriptor_GAUGE_INT64,
 }
 
 var daemonSetDesiredScheduledMetric = &metricspb.MetricDescriptor{
-	Name:        "k8s/daemon_set/desired_scheduled_nodes",
+	Name:        "k8s.daemonset.desired_scheduled_nodes",
 	Description: "Number of nodes that should be running the daemon pod (including nodes currently running the daemon pod)",
 	Unit:        "1",
 	Type:        metricspb.MetricDescriptor_GAUGE_INT64,
 }
 
 var daemonSetMisScheduledMetric = &metricspb.MetricDescriptor{
-	Name:        "k8s/daemon_set/misscheduled_nodes",
+	Name:        "k8s.daemonset.misscheduled_nodes",
 	Description: "Number of nodes that are running the daemon pod, but are not supposed to run the daemon pod",
 	Unit:        "1",
 	Type:        metricspb.MetricDescriptor_GAUGE_INT64,
 }
 
 var daemonSetReadyMetric = &metricspb.MetricDescriptor{
-	Name:        "k8s/daemon_set/ready_nodes",
+	Name:        "k8s.daemonset.ready_nodes",
 	Description: "Number of nodes that should be running the daemon pod and have one or more of the daemon pod running and ready",
 	Unit:        "1",
 	Type:        metricspb.MetricDescriptor_GAUGE_INT64,
@@ -91,16 +92,16 @@ func getResourceForDaemonSet(ds *appsv1.DaemonSet) *resourcepb.Resource {
 	return &resourcepb.Resource{
 		Type: k8sType,
 		Labels: map[string]string{
-			k8sKeyDaemonSetUID:                string(ds.UID),
-			k8sKeyDaemonSetName:               ds.Name,
-			conventions.AttributeK8sNamespace: ds.Namespace,
-			conventions.AttributeK8sCluster:   ds.ClusterName,
+			conventions.AttributeK8sDaemonSetUID: string(ds.UID),
+			conventions.AttributeK8sDaemonSet:    ds.Name,
+			conventions.AttributeK8sNamespace:    ds.Namespace,
+			conventions.AttributeK8sCluster:      ds.ClusterName,
 		},
 	}
 }
 
-func getMetadataForDaemonSet(ds *appsv1.DaemonSet) map[ResourceID]*KubernetesMetadata {
-	return map[ResourceID]*KubernetesMetadata{
-		ResourceID(ds.UID): getGenericMetadata(&ds.ObjectMeta, k8sKindDaemonSet),
+func getMetadataForDaemonSet(ds *appsv1.DaemonSet) map[metadata.ResourceID]*KubernetesMetadata {
+	return map[metadata.ResourceID]*KubernetesMetadata{
+		metadata.ResourceID(ds.UID): getGenericMetadata(&ds.ObjectMeta, k8sKindDaemonSet),
 	}
 }

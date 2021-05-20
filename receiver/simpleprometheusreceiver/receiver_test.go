@@ -15,6 +15,8 @@
 package simpleprometheusreceiver
 
 import (
+	"context"
+	"net/url"
 	"reflect"
 	"testing"
 	"time"
@@ -22,13 +24,59 @@ import (
 	configutil "github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/config"
-	sdconfig "github.com/prometheus/prometheus/discovery/config"
-	"github.com/prometheus/prometheus/discovery/targetgroup"
+	"github.com/prometheus/prometheus/discovery"
+	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/config/confignet"
 	"go.opentelemetry.io/collector/receiver/prometheusreceiver"
+	"go.opentelemetry.io/collector/testbed/testbed"
+	"go.uber.org/zap"
 )
 
-func Test_getPrometheusConfig(t *testing.T) {
+func TestReceiver(t *testing.T) {
+	f := NewFactory()
+	tests := []struct {
+		name              string
+		useServiceAccount bool
+		wantError         bool
+	}{
+		{
+			name: "success",
+		},
+		{
+			name:              "fails to get prometheus config",
+			useServiceAccount: true,
+			wantError:         true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := (f.CreateDefaultConfig()).(*Config)
+			cfg.UseServiceAccount = tt.useServiceAccount
+
+			r, err := f.CreateMetricsReceiver(
+				context.Background(),
+				component.ReceiverCreateParams{Logger: zap.NewNop()},
+				cfg,
+				&testbed.MockMetricConsumer{},
+			)
+
+			if !tt.wantError {
+				require.NoError(t, err)
+				require.NotNil(t, r)
+
+				require.NoError(t, r.Start(context.Background(), componenttest.NewNopHost()))
+				require.NoError(t, r.Shutdown(context.Background()))
+				return
+			}
+
+			require.Error(t, r.Start(context.Background(), componenttest.NewNopHost()))
+		})
+	}
+}
+
+func TestGetPrometheusConfig(t *testing.T) {
 	tests := []struct {
 		name    string
 		config  *Config
@@ -43,6 +91,7 @@ func Test_getPrometheusConfig(t *testing.T) {
 				},
 				CollectionInterval: 10 * time.Second,
 				MetricsPath:        "/metric",
+				Params:             url.Values{"foo": []string{"bar", "foobar"}},
 			},
 			want: &prometheusreceiver.Config{
 				PrometheusConfig: &config.Config{
@@ -54,8 +103,9 @@ func Test_getPrometheusConfig(t *testing.T) {
 							HonorTimestamps: true,
 							Scheme:          "http",
 							MetricsPath:     "/metric",
-							ServiceDiscoveryConfig: sdconfig.ServiceDiscoveryConfig{
-								StaticConfigs: []*targetgroup.Group{
+							Params:          url.Values{"foo": []string{"bar", "foobar"}},
+							ServiceDiscoveryConfigs: discovery.Configs{
+								&discovery.StaticConfig{
 									{
 										Targets: []model.LabelSet{
 											{model.AddressLabel: model.LabelValue("localhost:1234")},
@@ -96,8 +146,8 @@ func Test_getPrometheusConfig(t *testing.T) {
 							ScrapeTimeout:   model.Duration(10 * time.Second),
 							MetricsPath:     "/metrics",
 							Scheme:          "https",
-							ServiceDiscoveryConfig: sdconfig.ServiceDiscoveryConfig{
-								StaticConfigs: []*targetgroup.Group{
+							ServiceDiscoveryConfigs: discovery.Configs{
+								&discovery.StaticConfig{
 									{
 										Targets: []model.LabelSet{
 											{model.AddressLabel: model.LabelValue("localhost:1234")},
@@ -140,8 +190,8 @@ func Test_getPrometheusConfig(t *testing.T) {
 							ScrapeTimeout:   model.Duration(10 * time.Second),
 							MetricsPath:     "/metrics",
 							Scheme:          "https",
-							ServiceDiscoveryConfig: sdconfig.ServiceDiscoveryConfig{
-								StaticConfigs: []*targetgroup.Group{
+							ServiceDiscoveryConfigs: discovery.Configs{
+								&discovery.StaticConfig{
 									{
 										Targets: []model.LabelSet{
 											{model.AddressLabel: model.LabelValue("localhost:1234")},

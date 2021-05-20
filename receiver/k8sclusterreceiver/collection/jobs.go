@@ -20,56 +20,52 @@ import (
 	"go.opentelemetry.io/collector/translator/conventions"
 	batchv1 "k8s.io/api/batch/v1"
 
+	metadata "github.com/open-telemetry/opentelemetry-collector-contrib/pkg/experimentalmetricmetadata"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/k8sclusterreceiver/utils"
 )
 
 var podsActiveMetric = &metricspb.MetricDescriptor{
-	Name:        "k8s/job/active_pods",
+	Name:        "k8s.job.active_pods",
 	Description: "The number of actively running pods for a job",
 	Unit:        "1",
 	Type:        metricspb.MetricDescriptor_GAUGE_INT64,
 }
 
 var podsDesiredCompletedMetric = &metricspb.MetricDescriptor{
-	Name:        "k8s/job/desired_successful_pods",
+	Name:        "k8s.job.desired_successful_pods",
 	Description: "The desired number of successfully finished pods the job should be run with",
 	Unit:        "1",
 	Type:        metricspb.MetricDescriptor_GAUGE_INT64,
 }
 
 var podsFailedMetric = &metricspb.MetricDescriptor{
-	Name:        "k8s/job/failed_pods",
+	Name:        "k8s.job.failed_pods",
 	Description: "The number of pods which reached phase Failed for a job",
 	Unit:        "1",
 	Type:        metricspb.MetricDescriptor_GAUGE_INT64,
 }
 
 var podsMaxParallelMetric = &metricspb.MetricDescriptor{
-	Name:        "k8s/job/max_parallel_pods",
+	Name:        "k8s.job.max_parallel_pods",
 	Description: "The max desired number of pods the job should run at any given time",
 	Unit:        "1",
 	Type:        metricspb.MetricDescriptor_GAUGE_INT64,
 }
 
 var podsSuccessfulMetric = &metricspb.MetricDescriptor{
-	Name:        "k8s/job/successful_pods",
+	Name:        "k8s.job.successful_pods",
 	Description: "The number of pods which reached phase Succeeded for a job",
 	Unit:        "1",
 	Type:        metricspb.MetricDescriptor_GAUGE_INT64,
 }
 
 func getMetricsForJob(j *batchv1.Job) []*resourceMetrics {
-	metrics := []*metricspb.Metric{
+	metrics := make([]*metricspb.Metric, 0, 5)
+	metrics = append(metrics, []*metricspb.Metric{
 		{
 			MetricDescriptor: podsActiveMetric,
 			Timeseries: []*metricspb.TimeSeries{
 				utils.GetInt64TimeSeries(int64(j.Status.Active)),
-			},
-		},
-		{
-			MetricDescriptor: podsDesiredCompletedMetric,
-			Timeseries: []*metricspb.TimeSeries{
-				utils.GetInt64TimeSeries(int64(*j.Spec.Completions)),
 			},
 		},
 		{
@@ -79,17 +75,27 @@ func getMetricsForJob(j *batchv1.Job) []*resourceMetrics {
 			},
 		},
 		{
-			MetricDescriptor: podsMaxParallelMetric,
-			Timeseries: []*metricspb.TimeSeries{
-				utils.GetInt64TimeSeries(int64(*j.Spec.Parallelism)),
-			},
-		},
-		{
 			MetricDescriptor: podsSuccessfulMetric,
 			Timeseries: []*metricspb.TimeSeries{
 				utils.GetInt64TimeSeries(int64(j.Status.Succeeded)),
 			},
 		},
+	}...)
+
+	if j.Spec.Completions != nil {
+		metrics = append(metrics, &metricspb.Metric{
+			MetricDescriptor: podsDesiredCompletedMetric,
+			Timeseries: []*metricspb.TimeSeries{
+				utils.GetInt64TimeSeries(int64(*j.Spec.Completions)),
+			}})
+	}
+
+	if j.Spec.Parallelism != nil {
+		metrics = append(metrics, &metricspb.Metric{
+			MetricDescriptor: podsMaxParallelMetric,
+			Timeseries: []*metricspb.TimeSeries{
+				utils.GetInt64TimeSeries(int64(*j.Spec.Parallelism)),
+			}})
 	}
 
 	return []*resourceMetrics{
@@ -104,14 +110,16 @@ func getResourceForJob(j *batchv1.Job) *resourcepb.Resource {
 	return &resourcepb.Resource{
 		Type: k8sType,
 		Labels: map[string]string{
-			k8sKeyJobUID:                      string(j.UID),
-			k8sKeyJobName:                     j.Name,
+			conventions.AttributeK8sJobUID:    string(j.UID),
+			conventions.AttributeK8sJob:       j.Name,
 			conventions.AttributeK8sNamespace: j.Namespace,
 			conventions.AttributeK8sCluster:   j.ClusterName,
 		},
 	}
 }
 
-func getMetadataForJob(j *batchv1.Job) map[ResourceID]*KubernetesMetadata {
-	return map[ResourceID]*KubernetesMetadata{ResourceID(j.UID): getGenericMetadata(&j.ObjectMeta, k8sKindJob)}
+func getMetadataForJob(j *batchv1.Job) map[metadata.ResourceID]*KubernetesMetadata {
+	return map[metadata.ResourceID]*KubernetesMetadata{
+		metadata.ResourceID(j.UID): getGenericMetadata(&j.ObjectMeta, k8sKindJob),
+	}
 }

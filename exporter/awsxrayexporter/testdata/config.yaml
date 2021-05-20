@@ -1,8 +1,8 @@
 receivers:
-  examplereceiver:
+  nop:
 
 processors:
-  exampleprocessor:
+  nop:
 
 exporters:
   awsxray:
@@ -10,11 +10,12 @@ exporters:
     region: eu-west-1
     resource_arn: "arn:aws:ec2:us-east1:123456789:instance/i-293hiuhe0u"
     role_arn: "arn:aws:iam::123456789:role/monitoring-EKS-NodeInstanceRole"
+    indexed_attributes: ["indexed_attr_0", "indexed_attr_1"]
 
 service:
   pipelines:
     traces:
-      receivers: [examplereceiver]
-      processors: [exampleprocessor]
+      receivers: [nop]
+      processors: [nop]
       exporters: [awsxray]
 

@@ -20,6 +20,7 @@ import (
 	"go.opentelemetry.io/collector/translator/conventions"
 	batchv1beta1 "k8s.io/api/batch/v1beta1"
 
+	metadata "github.com/open-telemetry/opentelemetry-collector-contrib/pkg/experimentalmetricmetadata"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/k8sclusterreceiver/utils"
 )
 
@@ -30,7 +31,7 @@ const (
 )
 
 var activeJobs = &metricspb.MetricDescriptor{
-	Name:        "k8s/cronjob/active_jobs",
+	Name:        "k8s.cronjob.active_jobs",
 	Description: "The number of actively running jobs for a cronjob",
 	Unit:        "1",
 	Type:        metricspb.MetricDescriptor_GAUGE_INT64,
@@ -58,17 +59,17 @@ func getResourceForCronJob(cj *batchv1beta1.CronJob) *resourcepb.Resource {
 	return &resourcepb.Resource{
 		Type: k8sType,
 		Labels: map[string]string{
-			k8sKeyCronJobUID:                  string(cj.UID),
-			k8sKeyCronJobName:                 cj.Name,
-			conventions.AttributeK8sNamespace: cj.Namespace,
-			conventions.AttributeK8sCluster:   cj.ClusterName,
+			conventions.AttributeK8sCronJobUID: string(cj.UID),
+			conventions.AttributeK8sCronJob:    cj.Name,
+			conventions.AttributeK8sNamespace:  cj.Namespace,
+			conventions.AttributeK8sCluster:    cj.ClusterName,
 		},
 	}
 }
 
-func getMetadataForCronJob(cj *batchv1beta1.CronJob) map[ResourceID]*KubernetesMetadata {
+func getMetadataForCronJob(cj *batchv1beta1.CronJob) map[metadata.ResourceID]*KubernetesMetadata {
 	rm := getGenericMetadata(&cj.ObjectMeta, k8sKindCronJob)
 	rm.metadata[cronJobKeySchedule] = cj.Spec.Schedule
 	rm.metadata[cronJobKeyConcurrencyPolicy] = string(cj.Spec.ConcurrencyPolicy)
-	return map[ResourceID]*KubernetesMetadata{ResourceID(cj.UID): rm}
+	return map[metadata.ResourceID]*KubernetesMetadata{metadata.ResourceID(cj.UID): rm}
 }

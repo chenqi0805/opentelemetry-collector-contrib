@@ -19,21 +19,26 @@ import (
 	"fmt"
 	"net/url"
 	"path"
-	"time"
 
-	"go.opentelemetry.io/collector/config/configmodels"
+	"go.opentelemetry.io/collector/config"
+	"go.opentelemetry.io/collector/config/configtls"
+	"go.opentelemetry.io/collector/exporter/exporterhelper"
 )
 
 const (
 	// hecPath is the default HEC path on the Splunk instance.
-	hecPath = "services/collector"
+	hecPath                   = "services/collector"
+	maxContentLengthLogsLimit = 2 * 1024 * 1024
 )
 
 // Config defines configuration for Splunk exporter.
 type Config struct {
-	configmodels.ExporterSettings `mapstructure:",squash"` // squash ensures fields are correctly decoded in embedded struct.
+	config.ExporterSettings        `mapstructure:",squash"`
+	exporterhelper.TimeoutSettings `mapstructure:",squash"` // squash ensures fields are correctly decoded in embedded struct.
+	exporterhelper.QueueSettings   `mapstructure:"sending_queue"`
+	exporterhelper.RetrySettings   `mapstructure:"retry_on_failure"`
 
-	// HEC Token is the authentication token provided by Splunk.
+	// HEC Token is the authentication token provided by Splunk: https://docs.splunk.com/Documentation/Splunk/latest/Data/UsetheHTTPEventCollector.
 	Token string `mapstructure:"token"`
 
 	// URL is the Splunk HEC endpoint where data is going to be sent to.
@@ -55,12 +60,17 @@ type Config struct {
 	// Disable GZip compression. Defaults to false.
 	DisableCompression bool `mapstructure:"disable_compression"`
 
-	// Timeout is the maximum timeout for HTTP request sending trace data. The
-	// default value is 10 seconds.
-	Timeout time.Duration `mapstructure:"timeout"`
+	// Maximum log data size in bytes per HTTP post. Defaults to the backend limit of 2097152 bytes (2MiB).
+	MaxContentLengthLogs uint `mapstructure:"max_content_length_logs"`
 
-	// insecure_skip_verify skips checking the certificate of the HEC endpoint when sending data over HTTPS. Defaults to false.
-	InsecureSkipVerify bool `mapstructure:"insecure_skip_verify"`
+	// TLSSetting struct exposes TLS client configuration.
+	TLSSetting configtls.TLSClientSetting `mapstructure:",squash"`
+
+	// App name is used to track telemetry information for Splunk App's using HEC by App name. Defaults to "OpenTelemetry Collector Contrib".
+	SplunkAppName string `mapstructure:"splunk_app_name"`
+
+	// App version is used to track telemetry information for Splunk App's using HEC by App version. Defaults to the current OpenTelemetry Collector Contrib build version.
+	SplunkAppVersion string `mapstructure:"splunk_app_version"`
 }
 
 func (cfg *Config) getOptionsFromConfig() (*exporterOptions, error) {
@@ -86,6 +96,10 @@ func (cfg *Config) validateConfig() error {
 
 	if cfg.Token == "" {
 		return errors.New(`requires a non-empty "token"`)
+	}
+
+	if cfg.MaxContentLengthLogs > maxContentLengthLogsLimit {
+		return fmt.Errorf(`requires "max_content_length_logs" <= %d`, maxContentLengthLogsLimit)
 	}
 
 	return nil

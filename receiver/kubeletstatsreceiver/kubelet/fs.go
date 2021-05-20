@@ -16,15 +16,18 @@ package kubelet
 
 import (
 	metricspb "github.com/census-instrumentation/opencensus-proto/gen-go/metrics/v1"
-	stats "k8s.io/kubernetes/pkg/kubelet/apis/stats/v1alpha1"
+	stats "k8s.io/kubelet/pkg/apis/stats/v1alpha1"
 )
 
 func fsMetrics(prefix string, s *stats.FsStats) []*metricspb.Metric {
-	return applyCurrentTime([]*metricspb.Metric{
+	if s == nil {
+		return nil
+	}
+	return []*metricspb.Metric{
 		fsAvailableMetric(prefix, s),
 		fsCapacityMetric(prefix, s),
 		fsUsedMetric(prefix, s),
-	}, s.Time.Time)
+	}
 }
 
 func fsAvailableMetric(prefix string, s *stats.FsStats) *metricspb.Metric {

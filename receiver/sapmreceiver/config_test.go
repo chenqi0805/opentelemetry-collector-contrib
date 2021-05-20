@@ -20,20 +20,22 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/config"
-	"go.opentelemetry.io/collector/config/configmodels"
+	"go.opentelemetry.io/collector/config/confighttp"
+	"go.opentelemetry.io/collector/config/configtest"
 	"go.opentelemetry.io/collector/config/configtls"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/common/splunk"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/splunk"
 )
 
 func TestLoadConfig(t *testing.T) {
-	factories, err := config.ExampleComponents()
+	factories, err := componenttest.NopFactories()
 	assert.Nil(t, err)
 
-	factory := &Factory{}
-	factories.Receivers[configmodels.Type(typeStr)] = factory
-	cfg, err := config.LoadConfigFile(t, path.Join(".", "testdata", "config.yaml"), factories)
+	factory := NewFactory()
+	factories.Receivers[config.Type(typeStr)] = factory
+	cfg, err := configtest.LoadConfigFile(t, path.Join(".", "testdata", "config.yaml"), factories)
 
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
@@ -42,41 +44,40 @@ func TestLoadConfig(t *testing.T) {
 	// are excluded from the final list.
 	assert.Equal(t, len(cfg.Receivers), 4)
 
-	r0 := cfg.Receivers["sapm"]
+	r0 := cfg.Receivers[config.NewID(typeStr)]
 	assert.Equal(t, r0, factory.CreateDefaultConfig())
 
-	r1 := cfg.Receivers["sapm/customname"].(*Config)
+	r1 := cfg.Receivers[config.NewIDWithName(typeStr, "customname")].(*Config)
 	assert.Equal(t, r1,
 		&Config{
-			ReceiverSettings: configmodels.ReceiverSettings{
-				TypeVal: typeStr,
-				NameVal: "sapm/customname",
+			ReceiverSettings: config.NewReceiverSettings(config.NewIDWithName(typeStr, "customname")),
+			HTTPServerSettings: confighttp.HTTPServerSettings{
+				Endpoint: "0.0.0.0:7276",
 			},
-			Endpoint: "0.0.0.0:7276",
 		})
 
-	r2 := cfg.Receivers["sapm/tls"].(*Config)
+	r2 := cfg.Receivers[config.NewIDWithName(typeStr, "tls")].(*Config)
 	assert.Equal(t, r2,
 		&Config{
-			ReceiverSettings: configmodels.ReceiverSettings{
-				TypeVal: typeStr,
-				NameVal: "sapm/tls",
-			},
-			Endpoint: ":7276",
-			TLSCredentials: &configtls.TLSSetting{
-				CertFile: "/test.crt",
-				KeyFile:  "/test.key",
+			ReceiverSettings: config.NewReceiverSettings(config.NewIDWithName(typeStr, "tls")),
+			HTTPServerSettings: confighttp.HTTPServerSettings{
+				Endpoint: ":7276",
+				TLSSetting: &configtls.TLSServerSetting{
+					TLSSetting: configtls.TLSSetting{
+						CertFile: "/test.crt",
+						KeyFile:  "/test.key",
+					},
+				},
 			},
 		})
 
-	r3 := cfg.Receivers["sapm/passthrough"].(*Config)
+	r3 := cfg.Receivers[config.NewIDWithName(typeStr, "passthrough")].(*Config)
 	assert.Equal(t, r3,
 		&Config{
-			ReceiverSettings: configmodels.ReceiverSettings{
-				TypeVal: typeStr,
-				NameVal: "sapm/passthrough",
+			ReceiverSettings: config.NewReceiverSettings(config.NewIDWithName(typeStr, "passthrough")),
+			HTTPServerSettings: confighttp.HTTPServerSettings{
+				Endpoint: ":7276",
 			},
-			Endpoint: ":7276",
 			AccessTokenPassthroughConfig: splunk.AccessTokenPassthroughConfig{
 				AccessTokenPassthrough: true,
 			},

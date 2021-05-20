@@ -17,7 +17,6 @@ package splunkhecexporter
 import (
 	"compress/gzip"
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -27,31 +26,26 @@ import (
 	"time"
 
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/consumer"
-	"go.opentelemetry.io/collector/consumer/consumerdata"
-	"go.opentelemetry.io/collector/consumer/pdatautil"
-	"go.opentelemetry.io/collector/obsreport"
+	"go.opentelemetry.io/collector/consumer/pdata"
 	"go.uber.org/zap"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/splunk"
 )
 
 const (
-	idleConnTimeout     = 30 * time.Second
-	tlsHandshakeTimeout = 10 * time.Second
-	dialerTimeout       = 30 * time.Second
-	dialerKeepAlive     = 30 * time.Second
+	idleConnTimeout      = 30 * time.Second
+	tlsHandshakeTimeout  = 10 * time.Second
+	dialerTimeout        = 30 * time.Second
+	dialerKeepAlive      = 30 * time.Second
+	defaultSplunkAppName = "OpenTelemetry Collector Contrib"
 )
 
-// TraceAndMetricExporter sends traces and metrics.
-type TraceAndMetricExporter interface {
-	component.Component
-	consumer.MetricsConsumerOld
-	consumer.TraceConsumerOld
-}
-
 type splunkExporter struct {
-	pushMetricsData func(ctx context.Context, md consumerdata.MetricsData) (droppedTimeSeries int, err error)
-	pushTraceData   func(ctx context.Context, td consumerdata.TraceData) (numDroppedSpans int, err error)
+	pushMetricsData func(ctx context.Context, md pdata.Metrics) error
+	pushTraceData   func(ctx context.Context, td pdata.Traces) error
+	pushLogData     func(ctx context.Context, td pdata.Logs) error
 	stop            func(ctx context.Context) (err error)
+	start           func(ctx context.Context, host component.Host) (err error)
 }
 
 type exporterOptions struct {
@@ -63,27 +57,45 @@ type exporterOptions struct {
 func createExporter(
 	config *Config,
 	logger *zap.Logger,
-) (TraceAndMetricExporter, error) {
+	buildinfo *component.BuildInfo,
+) (*splunkExporter, error) {
 	if config == nil {
 		return nil, errors.New("nil config")
+	}
+
+	if config.SplunkAppName == "" {
+		config.SplunkAppName = defaultSplunkAppName
+	}
+
+	if config.SplunkAppVersion == "" {
+		config.SplunkAppVersion = buildinfo.Version
 	}
 
 	options, err := config.getOptionsFromConfig()
 	if err != nil {
 		return nil,
-			fmt.Errorf("failed to process %q config: %v", config.Name(), err)
+			fmt.Errorf("failed to process %q config: %v", config.ID().String(), err)
 	}
 
-	client := buildClient(options, config, logger)
+	client, err := buildClient(options, config, logger)
+	if err != nil {
+		return nil, err
+	}
 
-	return splunkExporter{
+	return &splunkExporter{
 		pushMetricsData: client.pushMetricsData,
 		pushTraceData:   client.pushTraceData,
+		pushLogData:     client.pushLogData,
 		stop:            client.stop,
+		start:           client.start,
 	}, nil
 }
 
-func buildClient(options *exporterOptions, config *Config, logger *zap.Logger) *client {
+func buildClient(options *exporterOptions, config *Config, logger *zap.Logger) (*client, error) {
+	tlsCfg, err := config.TLSSetting.LoadTLSConfig()
+	if err != nil {
+		return nil, fmt.Errorf("could not retrieve TLS config for Splunk HEC Exporter: %w", err)
+	}
 	return &client{
 		url: options.url,
 		client: &http.Client{
@@ -98,9 +110,7 @@ func buildClient(options *exporterOptions, config *Config, logger *zap.Logger) *
 				MaxIdleConnsPerHost: int(config.MaxConnections),
 				IdleConnTimeout:     idleConnTimeout,
 				TLSHandshakeTimeout: tlsHandshakeTimeout,
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: config.InsecureSkipVerify,
-				},
+				TLSClientConfig:     tlsCfg,
 			},
 		},
 		logger: logger,
@@ -108,38 +118,13 @@ func buildClient(options *exporterOptions, config *Config, logger *zap.Logger) *
 			return gzip.NewWriter(nil)
 		}},
 		headers: map[string]string{
-			"Connection":    "keep-alive",
-			"Content-Type":  "application/json",
-			"User-Agent":    "OpenTelemetry-Collector Splunk Exporter/v0.0.1",
-			"Authorization": "Splunk " + config.Token,
+			"Connection":           "keep-alive",
+			"Content-Type":         "application/json",
+			"User-Agent":           config.SplunkAppName + "/" + config.SplunkAppVersion,
+			"Authorization":        splunk.HECTokenHeader + " " + config.Token,
+			"__splunk_app_name":    config.SplunkAppName,
+			"__splunk_app_version": config.SplunkAppVersion,
 		},
 		config: config,
-	}
-}
-
-func (se splunkExporter) Start(context.Context, component.Host) error {
-	return nil
-}
-
-func (se splunkExporter) Shutdown(ctxt context.Context) error {
-	return se.stop(ctxt)
-}
-
-func (se splunkExporter) ConsumeMetricsData(ctx context.Context, md consumerdata.MetricsData) error {
-	ctx = obsreport.StartMetricsExportOp(ctx, typeStr)
-	numDroppedTimeSeries, err := se.pushMetricsData(ctx, md)
-
-	numReceivedTimeSeries, numPoints := pdatautil.TimeseriesAndPointCount(md)
-
-	obsreport.EndMetricsExportOp(ctx, numPoints, numReceivedTimeSeries, numDroppedTimeSeries, err)
-	return err
-}
-
-func (se splunkExporter) ConsumeTraceData(ctx context.Context, td consumerdata.TraceData) error {
-	ctx = obsreport.StartTraceDataExportOp(ctx, typeStr)
-
-	numDroppedSpans, err := se.pushTraceData(ctx, td)
-
-	obsreport.EndTraceDataExportOp(ctx, len(td.Spans), numDroppedSpans, err)
-	return err
+	}, nil
 }

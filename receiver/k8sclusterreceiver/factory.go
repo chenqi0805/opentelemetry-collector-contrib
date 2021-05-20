@@ -19,12 +19,11 @@ import (
 	"time"
 
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config/configerror"
-	"go.opentelemetry.io/collector/config/configmodels"
+	"go.opentelemetry.io/collector/config"
 	"go.opentelemetry.io/collector/consumer"
-	"go.uber.org/zap"
+	"go.opentelemetry.io/collector/receiver/receiverhelper"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/common/k8sconfig"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/k8sconfig"
 )
 
 const (
@@ -37,22 +36,9 @@ const (
 
 var defaultNodeConditionsToReport = []string{"Ready"}
 
-var _ component.ReceiverFactoryOld = (*Factory)(nil)
-
-// Factory is the factory for kubernetes-cluster receiver.
-type Factory struct {
-}
-
-func (f Factory) Type() configmodels.Type {
-	return typeStr
-}
-
-func (f Factory) CreateDefaultConfig() configmodels.Receiver {
+func createDefaultConfig() config.Receiver {
 	return &Config{
-		ReceiverSettings: configmodels.ReceiverSettings{
-			TypeVal: typeStr,
-			NameVal: typeStr,
-		},
+		ReceiverSettings:           config.NewReceiverSettings(config.NewID(typeStr)),
 		CollectionInterval:         defaultCollectionInterval,
 		NodeConditionTypesToReport: defaultNodeConditionsToReport,
 		APIConfig: k8sconfig.APIConfig{
@@ -61,17 +47,22 @@ func (f Factory) CreateDefaultConfig() configmodels.Receiver {
 	}
 }
 
-func (f Factory) CustomUnmarshaler() component.CustomUnmarshaler {
-	return nil
-}
-
-func (f Factory) CreateTraceReceiver(ctx context.Context, logger *zap.Logger, cfg configmodels.Receiver,
-	consumer consumer.TraceConsumerOld) (component.TraceReceiver, error) {
-	return nil, configerror.ErrDataTypeIsNotSupported
-}
-
-func (f Factory) CreateMetricsReceiver(ctx context.Context, logger *zap.Logger, cfg configmodels.Receiver,
-	consumer consumer.MetricsConsumerOld) (component.MetricsReceiver, error) {
+func createMetricsReceiver(
+	_ context.Context, params component.ReceiverCreateParams, cfg config.Receiver,
+	consumer consumer.Metrics) (component.MetricsReceiver, error) {
 	rCfg := cfg.(*Config)
-	return newReceiver(logger, rCfg, consumer)
+
+	k8sClient, err := rCfg.getK8sClient()
+	if err != nil {
+		return nil, err
+	}
+	return newReceiver(params.Logger, rCfg, consumer, k8sClient)
+}
+
+// NewFactory creates a factory for k8s_cluster receiver.
+func NewFactory() component.ReceiverFactory {
+	return receiverhelper.NewFactory(
+		typeStr,
+		createDefaultConfig,
+		receiverhelper.WithMetrics(createMetricsReceiver))
 }

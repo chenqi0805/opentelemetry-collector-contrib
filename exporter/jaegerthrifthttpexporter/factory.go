@@ -15,12 +15,13 @@
 package jaegerthrifthttpexporter
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config/configerror"
-	"go.opentelemetry.io/collector/config/configmodels"
+	"go.opentelemetry.io/collector/config"
+	"go.opentelemetry.io/collector/exporter/exporterhelper"
 	"go.uber.org/zap"
 )
 
@@ -29,57 +30,39 @@ const (
 	typeStr = "jaeger_thrift"
 )
 
-// Factory is the factory for Jaeger Thrift over HTTP exporter.
-type Factory struct {
+// NewFactory creates a factory for Jaeger Thrift over HTTP exporter.
+func NewFactory() component.ExporterFactory {
+	return exporterhelper.NewFactory(
+		typeStr,
+		createDefaultConfig,
+		exporterhelper.WithTraces(createTracesExporter))
 }
 
-// Type gets the type of the Exporter config created by this factory.
-func (f *Factory) Type() configmodels.Type {
-	return configmodels.Type(typeStr)
-}
-
-// CreateDefaultConfig creates the default configuration for exporter.
-func (f *Factory) CreateDefaultConfig() configmodels.Exporter {
+func createDefaultConfig() config.Exporter {
 	return &Config{
-		ExporterSettings: configmodels.ExporterSettings{
-			TypeVal: configmodels.Type(typeStr),
-			NameVal: typeStr,
-		},
-		Timeout: defaultHTTPTimeout,
+		ExporterSettings: config.NewExporterSettings(config.NewID(typeStr)),
+		Timeout:          defaultHTTPTimeout,
 	}
 }
 
-// CreateTraceExporter creates a trace exporter based on this config.
-func (f *Factory) CreateTraceExporter(
-	logger *zap.Logger,
-	config configmodels.Exporter,
-) (component.TraceExporterOld, error) {
+func createTracesExporter(
+	_ context.Context,
+	_ component.ExporterCreateParams,
+	config config.Exporter,
+) (component.TracesExporter, error) {
 
 	expCfg := config.(*Config)
 	_, err := url.ParseRequestURI(expCfg.URL)
 	if err != nil {
 		// TODO: Improve error message, see #215
-		err = fmt.Errorf(
-			"%q config requires a valid \"url\": %v",
-			expCfg.Name(),
-			err)
+		err = fmt.Errorf("%q config requires a valid \"url\": %v", expCfg.ID().String(), err)
 		return nil, err
 	}
 
 	if expCfg.Timeout <= 0 {
-		err := fmt.Errorf(
-			"%q config requires a positive value for \"timeout\"",
-			expCfg.Name())
+		err := fmt.Errorf("%q config requires a positive value for \"timeout\"", expCfg.ID().String())
 		return nil, err
 	}
 
-	return New(config, expCfg.URL, expCfg.Headers, expCfg.Timeout)
-}
-
-// CreateMetricsExporter creates a metrics exporter based on this config.
-func (f *Factory) CreateMetricsExporter(
-	logger *zap.Logger,
-	cfg configmodels.Exporter,
-) (component.MetricsExporterOld, error) {
-	return nil, configerror.ErrDataTypeIsNotSupported
+	return newTracesExporter(config, component.ExporterCreateParams{Logger: zap.NewNop()}, expCfg.URL, expCfg.Headers, expCfg.Timeout)
 }

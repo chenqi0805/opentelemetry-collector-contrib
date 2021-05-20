@@ -15,23 +15,16 @@
 package signalfxreceiver
 
 import (
-	"go.opentelemetry.io/collector/config/configmodels"
-	"go.opentelemetry.io/collector/config/configtls"
+	"go.opentelemetry.io/collector/config"
+	"go.opentelemetry.io/collector/config/confighttp"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/common/splunk"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/splunk"
 )
 
 // Config defines configuration for the SignalFx receiver.
 type Config struct {
-	configmodels.ReceiverSettings `mapstructure:",squash"` // squash ensures fields are correctly decoded in embedded struct
-
-	// TODO: Use one of the configs from core.
-	// The target endpoint.
-	Endpoint string `mapstructure:"endpoint"`
-
-	// Configures the receiver to use TLS.
-	// The default value is nil, which will cause the receiver to not use TLS.
-	TLSCredentials *configtls.TLSSetting `mapstructure:"tls, omitempty"`
+	config.ReceiverSettings       `mapstructure:",squash"` // squash ensures fields are correctly decoded in embedded struct
+	confighttp.HTTPServerSettings `mapstructure:",squash"` // squash ensures fields are correctly decoded in embedded struct
 
 	splunk.AccessTokenPassthroughConfig `mapstructure:",squash"`
 }

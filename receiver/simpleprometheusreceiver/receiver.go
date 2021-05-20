@@ -22,37 +22,35 @@ import (
 	configutil "github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/config"
-	sdconfig "github.com/prometheus/prometheus/discovery/config"
-	"github.com/prometheus/prometheus/discovery/targetgroup"
+	"github.com/prometheus/prometheus/discovery"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/receiver/prometheusreceiver"
-	"go.uber.org/zap"
 	"k8s.io/client-go/rest"
 )
 
 type prometheusReceiverWrapper struct {
-	logger            *zap.Logger
+	params            component.ReceiverCreateParams
 	config            *Config
-	consumer          consumer.MetricsConsumerOld
+	consumer          consumer.Metrics
 	prometheusRecever component.MetricsReceiver
 }
 
 // new returns a prometheusReceiverWrapper
-func new(logger *zap.Logger, cfg *Config, consumer consumer.MetricsConsumerOld) *prometheusReceiverWrapper {
-	return &prometheusReceiverWrapper{logger: logger, config: cfg, consumer: consumer}
+func new(params component.ReceiverCreateParams, cfg *Config, consumer consumer.Metrics) *prometheusReceiverWrapper {
+	return &prometheusReceiverWrapper{params: params, config: cfg, consumer: consumer}
 }
 
 // Start creates and starts the prometheus receiver.
 func (prw *prometheusReceiverWrapper) Start(ctx context.Context, host component.Host) error {
-	pFactory := &prometheusreceiver.Factory{}
+	pFactory := prometheusreceiver.NewFactory()
 
 	pConfig, err := getPrometheusConfig(prw.config)
 	if err != nil {
 		return fmt.Errorf("failed to create prometheus receiver config: %v", err)
 	}
 
-	pr, err := pFactory.CreateMetricsReceiver(ctx, prw.logger, pConfig, prw.consumer)
+	pr, err := pFactory.CreateMetricsReceiver(ctx, prw.params, pConfig, prw.consumer)
 	if err != nil {
 		return fmt.Errorf("failed to create prometheus receiver: %v", err)
 	}
@@ -98,8 +96,9 @@ func getPrometheusConfig(cfg *Config) (*prometheusreceiver.Config, error) {
 		HonorTimestamps: true,
 		Scheme:          scheme,
 		MetricsPath:     cfg.MetricsPath,
-		ServiceDiscoveryConfig: sdconfig.ServiceDiscoveryConfig{
-			StaticConfigs: []*targetgroup.Group{
+		Params:          cfg.Params,
+		ServiceDiscoveryConfigs: discovery.Configs{
+			&discovery.StaticConfig{
 				{
 					Targets: []model.LabelSet{
 						{model.AddressLabel: model.LabelValue(cfg.Endpoint)},

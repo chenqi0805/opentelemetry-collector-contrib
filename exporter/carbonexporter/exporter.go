@@ -21,37 +21,33 @@ import (
 	"sync"
 	"time"
 
+	agentmetricspb "github.com/census-instrumentation/opencensus-proto/gen-go/agent/metrics/v1"
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/consumer/consumerdata"
+	"go.opentelemetry.io/collector/consumer/pdata"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
+	"go.opentelemetry.io/collector/translator/internaldata"
 )
 
-// New returns a new Carbon exporter.
-func New(config Config) (component.MetricsExporterOld, error) {
-	effectiveConfig := setDefaults(config)
-
+// newCarbonExporter returns a new Carbon exporter.
+func newCarbonExporter(cfg *Config, params component.ExporterCreateParams) (component.MetricsExporter, error) {
 	// Resolve TCP address just to ensure that it is a valid one. It is better
 	// to fail here than at when the exporter is started.
-	if _, err := net.ResolveTCPAddr("tcp", effectiveConfig.Endpoint); err != nil {
-		return nil, fmt.Errorf(
-			"%q exporter has an invalid TCP endpoint: %v",
-			effectiveConfig.Name(),
-			err)
+	if _, err := net.ResolveTCPAddr("tcp", cfg.Endpoint); err != nil {
+		return nil, fmt.Errorf("%v exporter has an invalid TCP endpoint: %w", cfg.ID(), err)
 	}
 
 	// Negative timeouts are not acceptable, since all sends will fail.
-	if effectiveConfig.Timeout < 0 {
-		return nil, fmt.Errorf(
-			"%q exporter requires a positive timeout",
-			effectiveConfig.Name())
+	if cfg.Timeout < 0 {
+		return nil, fmt.Errorf("%v exporter requires a positive timeout", cfg.ID())
 	}
 
 	sender := carbonSender{
-		connPool: newTCPConnPool(effectiveConfig.Endpoint, effectiveConfig.Timeout),
+		connPool: newTCPConnPool(cfg.Endpoint, cfg.Timeout),
 	}
 
-	return exporterhelper.NewMetricsExporterOld(
-		&effectiveConfig.ExporterSettings,
+	return exporterhelper.NewMetricsExporter(
+		cfg,
+		params.Logger,
 		sender.pushMetricsData,
 		exporterhelper.WithShutdown(sender.Shutdown))
 }
@@ -63,18 +59,22 @@ type carbonSender struct {
 	connPool *connPool
 }
 
-func (cs *carbonSender) pushMetricsData(
-	ctx context.Context,
-	md consumerdata.MetricsData,
-) (int, error) {
-	lines, converted, dropped := metricDataToPlaintext(md)
+func (cs *carbonSender) pushMetricsData(_ context.Context, md pdata.Metrics) error {
+	rms := md.ResourceMetrics()
+	mds := make([]*agentmetricspb.ExportMetricsServiceRequest, 0, rms.Len())
+	for i := 0; i < rms.Len(); i++ {
+		emsr := &agentmetricspb.ExportMetricsServiceRequest{}
+		emsr.Node, emsr.Resource, emsr.Metrics = internaldata.ResourceMetricsToOC(rms.At(i))
+		mds = append(mds, emsr)
+	}
+	lines, _, _ := metricDataToPlaintext(mds)
 
 	if _, err := cs.connPool.Write([]byte(lines)); err != nil {
 		// Use the sum of converted and dropped since the write failed for all.
-		return converted + dropped, err
+		return err
 	}
 
-	return dropped, nil
+	return nil
 }
 
 func (cs *carbonSender) Shutdown(context.Context) error {

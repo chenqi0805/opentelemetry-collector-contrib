@@ -1,4 +1,4 @@
-// Copyright 2019, OpenTelemetry Authors
+// Copyright The OpenTelemetry Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,10 +18,10 @@ import (
 	"context"
 
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config/configerror"
-	"go.opentelemetry.io/collector/config/configmodels"
+	"go.opentelemetry.io/collector/config"
+	"go.opentelemetry.io/collector/exporter/exporterhelper"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/common/splunk"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/splunk"
 )
 
 const (
@@ -29,44 +29,32 @@ const (
 	typeStr = "sapm"
 )
 
-// Factory is the factory for SAPM exporter.
-type Factory struct {
+// NewFactory creates a factory for SAPM exporter.
+func NewFactory() component.ExporterFactory {
+	return exporterhelper.NewFactory(
+		typeStr,
+		createDefaultConfig,
+		exporterhelper.WithTraces(createTracesExporter))
 }
 
-// Type gets the type of the Exporter config created by this factory.
-func (f *Factory) Type() configmodels.Type {
-	return configmodels.Type(typeStr)
-}
-
-// CreateDefaultConfig creates the default configuration for exporter.
-func (f *Factory) CreateDefaultConfig() configmodels.Exporter {
+func createDefaultConfig() config.Exporter {
 	return &Config{
-		ExporterSettings: configmodels.ExporterSettings{
-			TypeVal: configmodels.Type(typeStr),
-			NameVal: typeStr,
-		},
-		NumWorkers: defaultNumWorkers,
+		ExporterSettings: config.NewExporterSettings(config.NewID(typeStr)),
+		NumWorkers:       defaultNumWorkers,
 		AccessTokenPassthroughConfig: splunk.AccessTokenPassthroughConfig{
 			AccessTokenPassthrough: true,
 		},
+		TimeoutSettings: exporterhelper.DefaultTimeoutSettings(),
+		RetrySettings:   exporterhelper.DefaultRetrySettings(),
+		QueueSettings:   exporterhelper.DefaultQueueSettings(),
 	}
 }
 
-// CreateTraceExporter creates a trace exporter based on this config.
-func (f *Factory) CreateTraceExporter(
+func createTracesExporter(
 	_ context.Context,
 	params component.ExporterCreateParams,
-	cfg configmodels.Exporter,
-) (component.TraceExporter, error) {
+	cfg config.Exporter,
+) (component.TracesExporter, error) {
 	eCfg := cfg.(*Config)
-	return newSAPMTraceExporter(eCfg, params)
-}
-
-// CreateMetricsExporter creates a metrics exporter based on this config.
-func (f *Factory) CreateMetricsExporter(
-	_ context.Context,
-	_ component.ExporterCreateParams,
-	_ configmodels.Exporter,
-) (component.MetricsExporter, error) {
-	return nil, configerror.ErrDataTypeIsNotSupported
+	return newSAPMTracesExporter(eCfg, params)
 }

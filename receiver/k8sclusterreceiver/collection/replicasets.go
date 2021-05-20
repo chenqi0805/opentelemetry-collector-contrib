@@ -18,6 +18,8 @@ import (
 	resourcepb "github.com/census-instrumentation/opencensus-proto/gen-go/resource/v1"
 	"go.opentelemetry.io/collector/translator/conventions"
 	appsv1 "k8s.io/api/apps/v1"
+
+	metadata "github.com/open-telemetry/opentelemetry-collector-contrib/pkg/experimentalmetricmetadata"
 )
 
 func getMetricsForReplicaSet(rs *appsv1.ReplicaSet) []*resourceMetrics {
@@ -29,7 +31,7 @@ func getMetricsForReplicaSet(rs *appsv1.ReplicaSet) []*resourceMetrics {
 		{
 			resource: getResourceForReplicaSet(rs),
 			metrics: getReplicaMetrics(
-				"replica_set",
+				"replicaset",
 				*rs.Spec.Replicas,
 				rs.Status.AvailableReplicas,
 			),
@@ -42,16 +44,16 @@ func getResourceForReplicaSet(rs *appsv1.ReplicaSet) *resourcepb.Resource {
 	return &resourcepb.Resource{
 		Type: k8sType,
 		Labels: map[string]string{
-			k8sKeyReplicaSetUID:               string(rs.UID),
-			k8sKeyReplicaSetName:              rs.Name,
-			conventions.AttributeK8sNamespace: rs.Namespace,
-			conventions.AttributeK8sCluster:   rs.ClusterName,
+			conventions.AttributeK8sReplicaSetUID: string(rs.UID),
+			conventions.AttributeK8sReplicaSet:    rs.Name,
+			conventions.AttributeK8sNamespace:     rs.Namespace,
+			conventions.AttributeK8sCluster:       rs.ClusterName,
 		},
 	}
 }
 
-func getMetadataForReplicaSet(rs *appsv1.ReplicaSet) map[ResourceID]*KubernetesMetadata {
-	return map[ResourceID]*KubernetesMetadata{
-		ResourceID(rs.UID): getGenericMetadata(&rs.ObjectMeta, k8sKindReplicaSet),
+func getMetadataForReplicaSet(rs *appsv1.ReplicaSet) map[metadata.ResourceID]*KubernetesMetadata {
+	return map[metadata.ResourceID]*KubernetesMetadata{
+		metadata.ResourceID(rs.UID): getGenericMetadata(&rs.ObjectMeta, k8sKindReplicaSet),
 	}
 }

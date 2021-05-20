@@ -21,20 +21,21 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/config"
-	"go.opentelemetry.io/collector/config/configmodels"
 	"go.opentelemetry.io/collector/config/confignet"
+	"go.opentelemetry.io/collector/config/configtest"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/carbonreceiver/protocol"
 )
 
 func TestLoadConfig(t *testing.T) {
-	factories, err := config.ExampleComponents()
+	factories, err := componenttest.NopFactories()
 	assert.Nil(t, err)
 
-	factory := &Factory{}
-	factories.Receivers[configmodels.Type(typeStr)] = factory
-	cfg, err := config.LoadConfigFile(
+	factory := NewFactory()
+	factories.Receivers[typeStr] = factory
+	cfg, err := configtest.LoadConfigFile(
 		t, path.Join(".", "testdata", "config.yaml"), factories,
 	)
 
@@ -43,16 +44,13 @@ func TestLoadConfig(t *testing.T) {
 
 	assert.Equal(t, len(cfg.Receivers), 3)
 
-	r0 := cfg.Receivers["carbon"]
+	r0 := cfg.Receivers[config.NewID(typeStr)]
 	assert.Equal(t, factory.CreateDefaultConfig(), r0)
 
-	r1 := cfg.Receivers["carbon/receiver_settings"].(*Config)
+	r1 := cfg.Receivers[config.NewIDWithName(typeStr, "receiver_settings")].(*Config)
 	assert.Equal(t,
 		&Config{
-			ReceiverSettings: configmodels.ReceiverSettings{
-				TypeVal: configmodels.Type(typeStr),
-				NameVal: "carbon/receiver_settings",
-			},
+			ReceiverSettings: config.NewReceiverSettings(config.NewIDWithName(typeStr, "receiver_settings")),
 			NetAddr: confignet.NetAddr{
 				Endpoint:  "localhost:8080",
 				Transport: "udp",
@@ -65,13 +63,10 @@ func TestLoadConfig(t *testing.T) {
 		},
 		r1)
 
-	r2 := cfg.Receivers["carbon/regex"].(*Config)
+	r2 := cfg.Receivers[config.NewIDWithName(typeStr, "regex")].(*Config)
 	assert.Equal(t,
 		&Config{
-			ReceiverSettings: configmodels.ReceiverSettings{
-				TypeVal: configmodels.Type(typeStr),
-				NameVal: "carbon/regex",
-			},
+			ReceiverSettings: config.NewReceiverSettings(config.NewIDWithName(typeStr, "regex")),
 			NetAddr: confignet.NetAddr{
 				Endpoint:  "localhost:2003",
 				Transport: "tcp",

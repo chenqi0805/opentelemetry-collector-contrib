@@ -21,18 +21,19 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/config"
 	"go.opentelemetry.io/collector/config/configcheck"
-	"go.opentelemetry.io/collector/config/configmodels"
+	"go.opentelemetry.io/collector/config/configtest"
 )
 
 func TestLoadConfig(t *testing.T) {
-	factories, err := config.ExampleComponents()
+	factories, err := componenttest.NopFactories()
 	assert.Nil(t, err)
 
-	factory := &Factory{}
-	factories.Exporters[configmodels.Type(typeStr)] = factory
-	cfg, err := config.LoadConfigFile(
+	factory := NewFactory()
+	factories.Exporters[config.Type(typeStr)] = factory
+	cfg, err := configtest.LoadConfigFile(
 		t, path.Join(".", "testdata", "config.yaml"), factories,
 	)
 
@@ -41,17 +42,15 @@ func TestLoadConfig(t *testing.T) {
 
 	assert.Equal(t, len(cfg.Exporters), 2)
 
-	exporterType := typeStr
-	exporter := cfg.Exporters[exporterType]
+	exporter := cfg.Exporters[config.NewID(typeStr)]
 	assert.Equal(t, factory.CreateDefaultConfig(), exporter)
 
-	exporterType = typeStr + "/2"
-	exporter = cfg.Exporters[exporterType].(*Config)
+	exporter = cfg.Exporters[config.NewIDWithName(typeStr, "2")].(*Config)
 	assert.NoError(t, configcheck.ValidateConfig(exporter))
 	assert.Equal(
 		t,
 		&Config{
-			ExporterSettings:   configmodels.ExporterSettings{TypeVal: configmodels.Type(typeStr), NameVal: exporterType},
+			ExporterSettings:   config.NewExporterSettings(config.NewIDWithName(typeStr, "2")),
 			Endpoint:           defaultEndpoint,
 			InstrumentationKey: "abcdefg",
 			MaxBatchSize:       100,

@@ -12,52 +12,59 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// +build !windows
+// TODO review if tests should succeed on Windows
+
 package kubeletstatsreceiver
 
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/component/componenterror"
+	"go.opentelemetry.io/collector/config"
 	"go.opentelemetry.io/collector/config/configcheck"
-	"go.opentelemetry.io/collector/config/configerror"
 	"go.opentelemetry.io/collector/config/configtls"
 	"go.opentelemetry.io/collector/testbed/testbed"
 	"go.uber.org/zap"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/common/k8sconfig"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/k8sconfig"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/kubeletstatsreceiver/kubelet"
 )
 
 func TestType(t *testing.T) {
-	factory := &Factory{}
+	factory := NewFactory()
 	ft := factory.Type()
 	require.EqualValues(t, "kubeletstats", ft)
 }
 
 func TestValidConfig(t *testing.T) {
-	factory := &Factory{}
+	factory := NewFactory()
 	err := configcheck.ValidateConfig(factory.CreateDefaultConfig())
 	require.NoError(t, err)
 }
 
-func TestCreateTraceReceiver(t *testing.T) {
-	factory := &Factory{}
-	traceReceiver, err := factory.CreateTraceReceiver(
+func TestCreateTracesReceiver(t *testing.T) {
+	factory := NewFactory()
+	traceReceiver, err := factory.CreateTracesReceiver(
 		context.Background(),
-		zap.NewNop(),
+		component.ReceiverCreateParams{Logger: zap.NewNop()},
 		factory.CreateDefaultConfig(),
 		nil,
 	)
-	require.Equal(t, err, configerror.ErrDataTypeIsNotSupported)
+	require.ErrorIs(t, err, componenterror.ErrDataTypeIsNotSupported)
 	require.Nil(t, traceReceiver)
 }
 
 func TestCreateMetricsReceiver(t *testing.T) {
-	factory := &Factory{}
+	factory := NewFactory()
 	metricsReceiver, err := factory.CreateMetricsReceiver(
 		context.Background(),
-		zap.NewNop(),
+		component.ReceiverCreateParams{Logger: zap.NewNop()},
 		tlsConfig(),
 		&testbed.MockMetricConsumer{},
 	)
@@ -65,8 +72,24 @@ func TestCreateMetricsReceiver(t *testing.T) {
 	require.NotNil(t, metricsReceiver)
 }
 
+func TestFactoryInvalidExtraMetadataLabels(t *testing.T) {
+	factory := NewFactory()
+	cfg := Config{
+		ExtraMetadataLabels: []kubelet.MetadataLabel{kubelet.MetadataLabel("invalid-label")},
+	}
+	metricsReceiver, err := factory.CreateMetricsReceiver(
+		context.Background(),
+		component.ReceiverCreateParams{Logger: zap.NewNop()},
+		&cfg,
+		&testbed.MockMetricConsumer{},
+	)
+	require.Error(t, err)
+	require.Equal(t, "label \"invalid-label\" is not supported", err.Error())
+	require.Nil(t, metricsReceiver)
+}
+
 func TestFactoryBadAuthType(t *testing.T) {
-	factory := &Factory{}
+	factory := NewFactory()
 	cfg := &Config{
 		ClientConfig: kubelet.ClientConfig{
 			APIConfig: k8sconfig.APIConfig{
@@ -74,12 +97,16 @@ func TestFactoryBadAuthType(t *testing.T) {
 			},
 		},
 	}
-	_, err := factory.CreateMetricsReceiver(context.Background(), zap.NewNop(), cfg, &testbed.MockMetricConsumer{})
+	_, err := factory.CreateMetricsReceiver(
+		context.Background(),
+		component.ReceiverCreateParams{Logger: zap.NewNop()},
+		cfg,
+		&testbed.MockMetricConsumer{},
+	)
 	require.Error(t, err)
 }
 
 func TestRestClientErr(t *testing.T) {
-	f := &Factory{}
 	cfg := &Config{
 		ClientConfig: kubelet.ClientConfig{
 			APIConfig: k8sconfig.APIConfig{
@@ -87,7 +114,7 @@ func TestRestClientErr(t *testing.T) {
 			},
 		},
 	}
-	_, err := f.restClient(zap.NewNop(), cfg)
+	_, err := restClient(zap.NewNop(), cfg)
 	require.Error(t, err)
 }
 
@@ -103,5 +130,91 @@ func tlsConfig() *Config {
 				KeyFile:  "testdata/testkey.key",
 			},
 		},
+	}
+}
+
+func TestCustomUnmarshaller(t *testing.T) {
+	type args struct {
+		componentParser *config.Parser
+		intoCfg         *Config
+	}
+	tests := []struct {
+		name                  string
+		args                  args
+		result                *Config
+		mockUnmarshallFailure bool
+		configOverride        map[string]interface{}
+		wantErr               bool
+	}{
+		{
+			name:    "No config",
+			wantErr: false,
+		},
+		{
+			name: "Fail initial unmarshal",
+			args: args{
+				componentParser: config.NewParser(),
+			},
+			wantErr: true,
+		},
+		{
+			name: "metric_group unset",
+			args: args{
+				componentParser: config.NewParser(),
+				intoCfg:         &Config{},
+			},
+			result: &Config{
+				MetricGroupsToCollect: defaultMetricGroups,
+			},
+		},
+		{
+			name: "fail to unmarshall metric_groups",
+			args: args{
+				componentParser: config.NewParser(),
+				intoCfg:         &Config{},
+			},
+			mockUnmarshallFailure: true,
+			wantErr:               true,
+		},
+		{
+			name: "successfully override metric_group",
+			args: args{
+				componentParser: config.NewParser(),
+				intoCfg: &Config{
+					CollectionInterval: 10 * time.Second,
+				},
+			},
+			configOverride: map[string]interface{}{
+				"metric_groups":       []kubelet.MetricGroup{kubelet.ContainerMetricGroup},
+				"collection_interval": 20 * time.Second,
+			},
+			result: &Config{
+				CollectionInterval:    20 * time.Second,
+				MetricGroupsToCollect: []kubelet.MetricGroup{kubelet.ContainerMetricGroup},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.mockUnmarshallFailure {
+				// some arbitrary failure.
+				tt.args.componentParser.Set(metricGroupsConfig, map[string]string{})
+			}
+
+			// Mock some config overrides.
+			if tt.configOverride != nil {
+				for k, v := range tt.configOverride {
+					tt.args.componentParser.Set(k, v)
+				}
+			}
+
+			if err := tt.args.intoCfg.Unmarshal(tt.args.componentParser); (err != nil) != tt.wantErr {
+				t.Errorf("customUnmarshaller() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if tt.result != nil {
+				assert.Equal(t, tt.result, tt.args.intoCfg)
+			}
+		})
 	}
 }

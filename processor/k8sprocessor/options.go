@@ -21,7 +21,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/selection"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/common/k8sconfig"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/k8sconfig"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/processor/k8sprocessor/kube"
 )
 
@@ -104,7 +104,7 @@ func WithExtractMetadata(fields ...string) Option {
 // WithExtractLabels allows specifying options to control extraction of pod labels.
 func WithExtractLabels(labels ...FieldExtractConfig) Option {
 	return func(p *kubernetesprocessor) error {
-		labels, err := extractFieldRules("label", labels...)
+		labels, err := extractFieldRules("labels", labels...)
 		if err != nil {
 			return err
 		}
@@ -116,7 +116,7 @@ func WithExtractLabels(labels ...FieldExtractConfig) Option {
 // WithExtractAnnotations allows specifying options to control extraction of pod annotations tags.
 func WithExtractAnnotations(annotations ...FieldExtractConfig) Option {
 	return func(p *kubernetesprocessor) error {
-		annotations, err := extractFieldRules("annotation", annotations...)
+		annotations, err := extractFieldRules("annotations", annotations...)
 		if err != nil {
 			return err
 		}
@@ -130,7 +130,7 @@ func extractFieldRules(fieldType string, fields ...FieldExtractConfig) ([]kube.F
 	for _, a := range fields {
 		name := a.TagName
 		if name == "" {
-			name = fmt.Sprintf("k8s.%s.%s", fieldType, a.Key)
+			name = fmt.Sprintf("k8s.pod.%s.%s", fieldType, a.Key)
 		}
 
 		var r *regexp.Regexp
@@ -231,6 +231,21 @@ func WithFilterFields(filters ...FieldFilterConfig) Option {
 			})
 		}
 		p.filters.Fields = fields
+		return nil
+	}
+}
+
+// WithExtractPodAssociations allows specifying options to associate pod metadata with incoming resource
+func WithExtractPodAssociations(podAssociations ...PodAssociationConfig) Option {
+	return func(p *kubernetesprocessor) error {
+		associations := make([]kube.Association, 0, len(podAssociations))
+		for _, association := range podAssociations {
+			associations = append(associations, kube.Association{
+				From: association.From,
+				Name: association.Name,
+			})
+		}
+		p.podAssociations = associations
 		return nil
 	}
 }

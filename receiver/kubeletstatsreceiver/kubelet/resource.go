@@ -15,15 +15,18 @@
 package kubelet
 
 import (
+	"fmt"
+
 	resourcepb "github.com/census-instrumentation/opencensus-proto/gen-go/resource/v1"
-	stats "k8s.io/kubernetes/pkg/kubelet/apis/stats/v1alpha1"
+	"go.opentelemetry.io/collector/translator/conventions"
+	stats "k8s.io/kubelet/pkg/apis/stats/v1alpha1"
 )
 
 func nodeResource(s stats.NodeStats) *resourcepb.Resource {
 	return &resourcepb.Resource{
 		Type: "k8s", // k8s/node
 		Labels: map[string]string{
-			"k8s.node.name": s.NodeName,
+			conventions.AttributeK8sNodeName: s.NodeName,
 		},
 	}
 }
@@ -32,22 +35,65 @@ func podResource(s stats.PodStats) *resourcepb.Resource {
 	return &resourcepb.Resource{
 		Type: "k8s", // k8s/pod
 		Labels: map[string]string{
-			"k8s.pod.uid":        s.PodRef.UID,
-			"k8s.pod.name":       s.PodRef.Name,
-			"k8s.namespace.name": s.PodRef.Namespace,
+			conventions.AttributeK8sPodUID:    s.PodRef.UID,
+			conventions.AttributeK8sPod:       s.PodRef.Name,
+			conventions.AttributeK8sNamespace: s.PodRef.Namespace,
 		},
 	}
 }
 
-func containerResource(pod *resourcepb.Resource, s stats.ContainerStats) *resourcepb.Resource {
+func containerResource(pod *resourcepb.Resource, s stats.ContainerStats, metadata Metadata) (*resourcepb.Resource, error) {
 	labels := map[string]string{}
 	for k, v := range pod.Labels {
 		labels[k] = v
 	}
 	// augment the container resource with pod labels
-	labels["container.name"] = s.Name
+	labels[conventions.AttributeK8sContainer] = s.Name
+	err := metadata.setExtraLabels(
+		labels, labels[conventions.AttributeK8sPodUID],
+		MetadataLabelContainerID, labels[conventions.AttributeK8sContainer],
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to set extra labels from metadata: %w", err)
+
+	}
 	return &resourcepb.Resource{
 		Type:   "k8s", // k8s/pod/container
 		Labels: labels,
+	}, nil
+}
+
+func volumeResource(pod *resourcepb.Resource, vs stats.VolumeStats, metadata Metadata) (*resourcepb.Resource, error) {
+	labels := map[string]string{
+		labelVolumeName: vs.Name,
 	}
+
+	err := metadata.setExtraLabels(
+		labels, pod.Labels[conventions.AttributeK8sPodUID],
+		MetadataLabelVolumeType, labels[labelVolumeName],
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to set extra labels from metadata: %w", err)
+	}
+
+	if labels[labelVolumeType] == labelValuePersistentVolumeClaim {
+		volCacheID := fmt.Sprintf("%s/%s", pod.Labels[conventions.AttributeK8sPodUID], vs.Name)
+		err = metadata.DetailedPVCLabelsSetter(
+			volCacheID, labels[labelPersistentVolumeClaimName],
+			pod.Labels[conventions.AttributeK8sNamespace], labels,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to set labels from volume claim: %w", err)
+		}
+	}
+
+	// Collect relevant Pod labels to be able to associate the volume to it.
+	labels[conventions.AttributeK8sPodUID] = pod.Labels[conventions.AttributeK8sPodUID]
+	labels[conventions.AttributeK8sPod] = pod.Labels[conventions.AttributeK8sPod]
+	labels[conventions.AttributeK8sNamespace] = pod.Labels[conventions.AttributeK8sNamespace]
+
+	return &resourcepb.Resource{
+		Type:   "k8s",
+		Labels: labels,
+	}, nil
 }

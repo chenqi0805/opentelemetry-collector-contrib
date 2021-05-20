@@ -19,17 +19,19 @@ import (
 	"fmt"
 
 	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/config/confighttp"
+	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/testbed/testbed"
 	"go.uber.org/zap"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/common/splunk"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/splunk"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sapmreceiver"
 )
 
 // SapmDataReceiver implements Sapm format receiver.
 type SapmDataReceiver struct {
 	testbed.DataReceiverBase
-	receiver component.TraceReceiver
+	receiver component.TracesReceiver
 }
 
 // NewSapmDataReceiver creates a new SapmDataReceiver.
@@ -38,9 +40,11 @@ func NewSapmDataReceiver(port int) *SapmDataReceiver {
 }
 
 // Start the receiver.
-func (sr *SapmDataReceiver) Start(tc *testbed.MockTraceConsumer, mc *testbed.MockMetricConsumer) error {
+func (sr *SapmDataReceiver) Start(tc consumer.Traces, _ consumer.Metrics, _ consumer.Logs) error {
 	sapmCfg := sapmreceiver.Config{
-		Endpoint:                     fmt.Sprintf("localhost:%d", sr.Port),
+		HTTPServerSettings: confighttp.HTTPServerSettings{
+			Endpoint: fmt.Sprintf("localhost:%d", sr.Port),
+		},
 		AccessTokenPassthroughConfig: splunk.AccessTokenPassthroughConfig{AccessTokenPassthrough: true},
 	}
 	var err error

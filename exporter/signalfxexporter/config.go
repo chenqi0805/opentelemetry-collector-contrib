@@ -18,40 +18,46 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"path"
 	"time"
 
-	"go.opentelemetry.io/collector/config/configmodels"
+	"go.opentelemetry.io/collector/config"
+	"go.opentelemetry.io/collector/exporter/exporterhelper"
 
+	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/signalfxexporter/correlation"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/signalfxexporter/translation"
-	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/common/splunk"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/signalfxexporter/translation/dpfilters"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/splunk"
 )
+
+const (
+	translationRulesConfigKey = "translation_rules"
+)
+
+var _ config.CustomUnmarshable = (*Config)(nil)
 
 // Config defines configuration for SignalFx exporter.
 type Config struct {
-	configmodels.ExporterSettings `mapstructure:",squash"` // squash ensures fields are correctly decoded in embedded struct.
+	config.ExporterSettings        `mapstructure:",squash"`
+	exporterhelper.TimeoutSettings `mapstructure:",squash"` // squash ensures fields are correctly decoded in embedded struct.
+	exporterhelper.QueueSettings   `mapstructure:"sending_queue"`
+	exporterhelper.RetrySettings   `mapstructure:"retry_on_failure"`
 
 	// AccessToken is the authentication token provided by SignalFx.
 	AccessToken string `mapstructure:"access_token"`
 
-	// Realm is the SignalFx realm where data is going to be sent to. The
-	// default value is "us0"
+	// Realm is the SignalFx realm where data is going to be sent to.
 	Realm string `mapstructure:"realm"`
 
 	// IngestURL is the destination to where SignalFx metrics will be sent to, it is
 	// intended for tests and debugging. The value of Realm is ignored if the
 	// URL is specified. If a path is not included the exporter will
 	// automatically append the appropriate path, eg.: "v2/datapoint".
-	// If a path is specified it will use the one set by the config.
+	// If a path is specified it will act as a prefix.
 	IngestURL string `mapstructure:"ingest_url"`
 
 	// APIURL is the destination to where SignalFx metadata will be sent. This
 	// value takes precedence over the value of Realm
 	APIURL string `mapstructure:"api_url"`
-
-	// Timeout is the maximum timeout for HTTP request sending trace data. The
-	// default value is 5 seconds.
-	Timeout time.Duration `mapstructure:"timeout"`
 
 	// Headers are a set of headers to be added to the HTTP request sending
 	// trace data. These can override pre-defined header values used by the
@@ -64,13 +70,40 @@ type Config struct {
 
 	splunk.AccessTokenPassthroughConfig `mapstructure:",squash"`
 
-	// SendCompatibleMetrics specifies if metrics must be sent in a format backward-compatible with
-	// SignalFx naming conventions, "false" by default.
-	SendCompatibleMetrics bool `mapstructure:"send_compatible_metrics"`
-
 	// TranslationRules defines a set of rules how to translate metrics to a SignalFx compatible format
-	// If not provided explicitly, the rules defined in translations/config/default.yaml are used.
+	// Rules defined in translation/constants.go are used by default.
 	TranslationRules []translation.Rule `mapstructure:"translation_rules"`
+
+	// DeltaTranslationTTL specifies in seconds the max duration to keep the most recent datapoint for any
+	// `delta_metric` specified in TranslationRules. Default is 3600s.
+	DeltaTranslationTTL int64 `mapstructure:"delta_translation_ttl"`
+
+	// SyncHostMetadata defines if the exporter should scrape host metadata and
+	// sends it as property updates to SignalFx backend.
+	// IMPORTANT: Host metadata synchronization relies on `resourcedetection` processor.
+	//            If this option is enabled make sure that `resourcedetection` processor
+	//            is enabled in the pipeline with one of the cloud provider detectors
+	//            or environment variable detector setting a unique value to
+	//            `host.name` attribute within your k8s cluster. Also keep override
+	//            And keep `override=true` in resourcedetection config.
+	SyncHostMetadata bool `mapstructure:"sync_host_metadata"`
+
+	// ExcludeMetrics defines dpfilter.MetricFilters that will determine metrics to be
+	// excluded from sending to SignalFx backend. If translations enabled with
+	// TranslationRules options, the exclusion will be applie on translated metrics.
+	ExcludeMetrics []dpfilters.MetricFilter `mapstructure:"exclude_metrics"`
+
+	// IncludeMetrics defines dpfilter.MetricFilters to override exclusion any of metric.
+	// This option can be used to included metrics that are otherwise dropped by default.
+	// See ./translation/default_metrics.go for a list of metrics that are dropped by default.
+	IncludeMetrics []dpfilters.MetricFilter `mapstructure:"include_metrics"`
+
+	// Correlation configuration for syncing traces service and environment to metrics.
+	Correlation *correlation.Config `mapstructure:"correlation"`
+
+	// NonAlphanumericDimensionChars is a list of allowable characters, in addition to alphanumeric ones,
+	// to be used in a dimension key.
+	NonAlphanumericDimensionChars string `mapstructure:"nonalphanumeric_dimension_chars"`
 }
 
 func (cfg *Config) getOptionsFromConfig() (*exporterOptions, error) {
@@ -92,12 +125,9 @@ func (cfg *Config) getOptionsFromConfig() (*exporterOptions, error) {
 		cfg.Timeout = 5 * time.Second
 	}
 
-	var metricTranslator *translation.MetricTranslator
-	if cfg.SendCompatibleMetrics {
-		metricTranslator, err = translation.NewMetricTranslator(cfg.TranslationRules)
-		if err != nil {
-			return nil, fmt.Errorf("invalid \"translation_rules\": %v", err)
-		}
+	metricTranslator, err := translation.NewMetricTranslator(cfg.TranslationRules, cfg.DeltaTranslationTTL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid \"%s\": %v", translationRulesConfigKey, err)
 	}
 
 	return &exporterOptions{
@@ -112,44 +142,54 @@ func (cfg *Config) getOptionsFromConfig() (*exporterOptions, error) {
 
 func (cfg *Config) validateConfig() error {
 	if cfg.AccessToken == "" {
-		return errors.New("requires a non-empty \"access_token\"")
+		return errors.New(`requires a non-empty "access_token"`)
 	}
 
 	if cfg.Realm == "" && (cfg.IngestURL == "" || cfg.APIURL == "") {
-		return errors.New("requires a non-empty \"realm\", or" +
-			" \"ingest_url\" and \"api_url\" should be explicitly set")
+		return errors.New(`requires a non-empty "realm", or` +
+			` "ingest_url" and "api_url" should be explicitly set`)
 	}
 
 	if cfg.Timeout < 0 {
-		return errors.New("cannot have a negative \"timeout\"")
+		return errors.New(`cannot have a negative "timeout"`)
 	}
 
 	return nil
 }
 
-func (cfg *Config) getIngestURL() (out *url.URL, err error) {
-	if cfg.IngestURL == "" {
-		out, err = url.Parse(fmt.Sprintf("https://ingest.%s.signalfx.com/v2/datapoint", cfg.Realm))
-		if err != nil {
-			return out, err
-		}
-	} else {
+func (cfg *Config) getIngestURL() (*url.URL, error) {
+	if cfg.IngestURL != "" {
 		// Ignore realm and use the IngestURL. Typically used for debugging.
-		out, err = url.Parse(cfg.IngestURL)
-		if err != nil {
-			return out, err
-		}
-		if out.Path == "" || out.Path == "/" {
-			out.Path = path.Join(out.Path, "v2/datapoint")
-		}
+		return url.Parse(cfg.IngestURL)
 	}
 
-	return out, err
+	return url.Parse(fmt.Sprintf("https://ingest.%s.signalfx.com", cfg.Realm))
 }
 
 func (cfg *Config) getAPIURL() (*url.URL, error) {
-	if cfg.APIURL == "" {
-		return url.Parse(fmt.Sprintf("https://api.%s.signalfx.com", cfg.Realm))
+	if cfg.APIURL != "" {
+		// Ignore realm and use the APIURL. Typically used for debugging.
+		return url.Parse(cfg.APIURL)
 	}
-	return url.Parse(cfg.APIURL)
+
+	return url.Parse(fmt.Sprintf("https://api.%s.signalfx.com", cfg.Realm))
+}
+
+func (cfg *Config) Unmarshal(componentParser *config.Parser) (err error) {
+	if componentParser == nil {
+		// Nothing to do if there is no config given.
+		return nil
+	}
+
+	if err = componentParser.Unmarshal(cfg); err != nil {
+		return err
+	}
+
+	// If translations_config is not set in the config, set it to the defaults and return.
+	if !componentParser.IsSet(translationRulesConfigKey) {
+		cfg.TranslationRules, err = loadDefaultTranslationRules()
+		return err
+	}
+
+	return nil
 }

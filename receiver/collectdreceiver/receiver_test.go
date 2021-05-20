@@ -18,19 +18,21 @@ import (
 	"bytes"
 	"context"
 	"net/http"
-	"sync"
 	"testing"
 	"time"
 
+	agentmetricspb "github.com/census-instrumentation/opencensus-proto/gen-go/agent/metrics/v1"
 	metricspb "github.com/census-instrumentation/opencensus-proto/gen-go/metrics/v1"
-	"github.com/golang/protobuf/ptypes/timestamp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/component/componenterror"
 	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/consumer"
-	"go.opentelemetry.io/collector/consumer/consumerdata"
-	"go.opentelemetry.io/collector/exporter/exportertest"
+	"go.opentelemetry.io/collector/consumer/consumertest"
+	"go.opentelemetry.io/collector/translator/internaldata"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type metricLabel struct {
@@ -43,7 +45,7 @@ func TestNewReceiver(t *testing.T) {
 		addr         string
 		timeout      time.Duration
 		attrsPrefix  string
-		nextConsumer consumer.MetricsConsumerOld
+		nextConsumer consumer.Metrics
 	}
 	tests := []struct {
 		name    string
@@ -57,7 +59,7 @@ func TestNewReceiver(t *testing.T) {
 				timeout:     defaultTimeout,
 				attrsPrefix: "default_attr_",
 			},
-			wantErr: errNilNextConsumer,
+			wantErr: componenterror.ErrNilNextConsumer,
 		},
 		{
 			name: "happy path",
@@ -65,16 +67,16 @@ func TestNewReceiver(t *testing.T) {
 				addr:         ":0",
 				timeout:      defaultTimeout,
 				attrsPrefix:  "default_attr_",
-				nextConsumer: exportertest.NewNopMetricsExporterOld(),
+				nextConsumer: consumertest.NewNop(),
 			},
 		},
 	}
 	logger := zap.NewNop()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := New(logger, tt.args.addr, time.Second*10, "", tt.args.nextConsumer)
+			_, err := newCollectdReceiver(logger, tt.args.addr, time.Second*10, "", tt.args.nextConsumer)
 			if err != tt.wantErr {
-				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("newCollectdReceiver() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 		})
@@ -90,7 +92,7 @@ func TestCollectDServer(t *testing.T) {
 		queryParams  string
 		requestBody  string
 		responseCode int
-		wantData     []consumerdata.MetricsData
+		wantData     []*agentmetricspb.ExportMetricsServiceRequest
 	}
 
 	testCases := []testCase{{
@@ -117,7 +119,7 @@ func TestCollectDServer(t *testing.T) {
     }
 ]`,
 		responseCode: 200,
-		wantData: []consumerdata.MetricsData{{
+		wantData: []*agentmetricspb.ExportMetricsServiceRequest{{
 			Metrics: []*metricspb.Metric{{
 				MetricDescriptor: &metricspb.MetricDescriptor{
 					Name: "memory.free",
@@ -131,13 +133,13 @@ func TestCollectDServer(t *testing.T) {
 				},
 				Timeseries: []*metricspb.TimeSeries{{
 					LabelValues: []*metricspb.LabelValue{
-						{Value: "memory"},
-						{Value: "i-b13d1e5f"},
-						{Value: "value"},
-						{Value: "attr1val"},
+						{Value: "memory", HasValue: true},
+						{Value: "i-b13d1e5f", HasValue: true},
+						{Value: "value", HasValue: true},
+						{Value: "attr1val", HasValue: true},
 					},
 					Points: []*metricspb.Point{{
-						Timestamp: &timestamp.Timestamp{Seconds: 1415062577, Nanos: 494999808},
+						Timestamp: &timestamppb.Timestamp{Seconds: 1415062577, Nanos: 494999808},
 						Value: &metricspb.Point_DoubleValue{
 							DoubleValue: 2.1474,
 						}},
@@ -149,13 +151,13 @@ func TestCollectDServer(t *testing.T) {
 		name:         "invalid-request-body",
 		requestBody:  `invalid-body`,
 		responseCode: 400,
-		wantData:     []consumerdata.MetricsData{},
+		wantData:     []*agentmetricspb.ExportMetricsServiceRequest{},
 	}}
 
-	sink := newMockMetricsSink(1)
+	sink := new(consumertest.MetricsSink)
 
 	logger := zap.NewNop()
-	cdr, err := New(logger, endpoint, defaultTimeout, defaultAttrsPrefix, sink)
+	cdr, err := newCollectdReceiver(logger, endpoint, defaultTimeout, defaultAttrsPrefix, sink)
 	if err != nil {
 		t.Fatalf("Failed to create receiver: %v", err)
 	}
@@ -172,8 +174,7 @@ func TestCollectDServer(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
-
-			sink.receivedData = []consumerdata.MetricsData{}
+			sink.Reset()
 			req, err := http.NewRequest(
 				"POST",
 				"http://"+endpoint+"?"+tt.queryParams,
@@ -191,57 +192,24 @@ func TestCollectDServer(t *testing.T) {
 				return
 			}
 
-			done := make(chan struct{})
-			go func() {
-				sink.Wait()
-				close(done)
-			}()
-
-			select {
-			case <-done:
-			case <-time.After(1 * time.Second):
-				t.Errorf("timeout: sink did not receive data")
+			assert.Eventually(t, func() bool {
+				return len(sink.AllMetrics()) == 1
+			}, 10*time.Second, 5*time.Millisecond)
+			mds := sink.AllMetrics()
+			require.Len(t, mds, 1)
+			rms := mds[0].ResourceMetrics()
+			got := make([]*agentmetricspb.ExportMetricsServiceRequest, 0, rms.Len())
+			for i := 0; i < rms.Len(); i++ {
+				emsr := &agentmetricspb.ExportMetricsServiceRequest{}
+				emsr.Node, emsr.Resource, emsr.Metrics = internaldata.ResourceMetricsToOC(rms.At(i))
+				got = append(got, emsr)
 			}
-			assertMetricsDataAreEqual(t, sink.receivedData, tt.wantData)
+			assertMetricsDataAreEqual(t, got, tt.wantData)
 		})
 	}
 }
 
-type mockMetricsSink struct {
-	wg           *sync.WaitGroup
-	queue        chan consumerdata.MetricsData
-	receivedData []consumerdata.MetricsData
-}
-
-func newMockMetricsSink(numReceiveTraceDataCount int) *mockMetricsSink {
-	wg := &sync.WaitGroup{}
-	wg.Add(numReceiveTraceDataCount)
-
-	sink := &mockMetricsSink{
-		wg:           wg,
-		queue:        make(chan consumerdata.MetricsData),
-		receivedData: make([]consumerdata.MetricsData, 0, numReceiveTraceDataCount),
-	}
-	go func() {
-		md := <-sink.queue
-		sink.receivedData = append(sink.receivedData, md)
-		sink.wg.Done()
-	}()
-	return sink
-}
-
-var _ consumer.MetricsConsumerOld = (*mockMetricsSink)(nil)
-
-func (m *mockMetricsSink) ConsumeMetricsData(ctx context.Context, md consumerdata.MetricsData) error {
-	m.queue <- md
-	return nil
-}
-
-func (m *mockMetricsSink) Wait() {
-	m.wg.Wait()
-}
-
-func assertMetricsDataAreEqual(t *testing.T, metricsData1, metricsData2 []consumerdata.MetricsData) {
+func assertMetricsDataAreEqual(t *testing.T, metricsData1, metricsData2 []*agentmetricspb.ExportMetricsServiceRequest) {
 	if len(metricsData1) != len(metricsData2) {
 		t.Errorf("metrics data length mismatch. got:\n%d\nwant:\n%d\n", len(metricsData1), len(metricsData2))
 		return
@@ -250,15 +218,14 @@ func assertMetricsDataAreEqual(t *testing.T, metricsData1, metricsData2 []consum
 	for i := 0; i < len(metricsData1); i++ {
 		md1, md2 := metricsData1[i], metricsData2[i]
 
-		if !assert.ObjectsAreEqual(md1.Node, md2.Node) {
+		if !proto.Equal(md1.Node, md2.Node) {
 			t.Errorf("metrics data nodes are not equal. got:\n%+v\nwant:\n%+v\n", md1.Node, md2.Node)
 		}
-		if !assert.ObjectsAreEqual(md1.Resource, md2.Resource) {
+		if !proto.Equal(md1.Resource, md2.Resource) {
 			t.Errorf("metrics data resources are not equal. got:\n%+v\nwant:\n%+v\n", md1.Resource, md2.Resource)
 		}
 
 		assertMetricsAreEqual(t, md1.Metrics, md2.Metrics)
-
 	}
 }
 
@@ -271,7 +238,7 @@ func assertMetricsAreEqual(t *testing.T, metrics1, metrics2 []*metricspb.Metric)
 	for i := 0; i < len(metrics1); i++ {
 		m1, m2 := metrics1[i], metrics2[i]
 
-		if !assert.ObjectsAreEqual(m1.Resource, m2.Resource) {
+		if !proto.Equal(m1.Resource, m2.Resource) {
 			t.Errorf("metric resources are not equal. got:\n%+v\nwant:\n%+v\n", m1.Resource, m2.Resource)
 		}
 
@@ -305,10 +272,7 @@ func assertMetricsAreEqual(t *testing.T, metrics1, metrics2 []*metricspb.Metric)
 				t.Errorf("labels length mismatch. got:\n%d\nwant:\n%d\n", len(l1), len(l2))
 				return
 			}
-			if !assert.ObjectsAreEqual(l1, l2) {
-				t.Errorf("metric labels are not equal. got:\n%+v\nwant:\n%+v\n", l1, l2)
-			}
-
+			assert.EqualValues(t, l1, l2)
 		}
 	}
 }

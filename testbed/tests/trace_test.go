@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package tests contains test cases. To run the tests go to tests directory and run:
-// TESTBED_CONFIG=local.yaml go test -v
+// RUN_TESTBED=1 go test -v
 
 package tests
 
@@ -31,6 +31,7 @@ var contribPerfResultsSummary testbed.TestResultsSummary = &testbed.PerformanceR
 
 // TestMain is used to initiate setup, execution and tear down of testbed.
 func TestMain(m *testing.M) {
+	testbed.GlobalConfig.DefaultAgentExeRelativeFile = "../../bin/otelcontribcol_{{.GOOS}}_{{.GOARCH}}"
 	testbed.DoTestMain(m, contribPerfResultsSummary)
 }
 
@@ -42,21 +43,12 @@ func TestTrace10kSPS(t *testing.T) {
 		resourceSpec testbed.ResourceSpec
 	}{
 		{
-			"OpenCensus",
-			testbed.NewOCTraceDataSender(testbed.DefaultHost, testbed.GetAvailablePort(t)),
-			testbed.NewOCDataReceiver(testbed.GetAvailablePort(t)),
-			testbed.ResourceSpec{
-				ExpectedMaxCPU: 39,
-				ExpectedMaxRAM: 70,
-			},
-		},
-		{
 			"OTLP",
 			testbed.NewOTLPTraceDataSender(testbed.DefaultHost, testbed.GetAvailablePort(t)),
 			testbed.NewOTLPDataReceiver(testbed.GetAvailablePort(t)),
 			testbed.ResourceSpec{
-				ExpectedMaxCPU: 20,
-				ExpectedMaxRAM: 70,
+				ExpectedMaxCPU: 16,
+				ExpectedMaxRAM: 80,
 			},
 		},
 		{
@@ -64,8 +56,8 @@ func TestTrace10kSPS(t *testing.T) {
 			datasenders.NewSapmDataSender(testbed.GetAvailablePort(t)),
 			datareceivers.NewSapmDataReceiver(testbed.GetAvailablePort(t)),
 			testbed.ResourceSpec{
-				ExpectedMaxCPU: 40,
-				ExpectedMaxRAM: 80,
+				ExpectedMaxCPU: 32,
+				ExpectedMaxRAM: 98,
 			},
 		},
 	}
@@ -85,6 +77,7 @@ func TestTrace10kSPS(t *testing.T) {
 				test.resourceSpec,
 				contribPerfResultsSummary,
 				processors,
+				nil,
 			)
 		})
 	}

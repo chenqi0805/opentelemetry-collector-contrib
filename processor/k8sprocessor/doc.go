@@ -12,15 +12,33 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package k8sprocessor allow automatic tagging of spans and metrics with k8s metadata.
+// Package k8sprocessor allow automatic tagging of spans, metrics and logs with k8s metadata.
 //
 // The processor automatically discovers k8s resources (pods), extracts metadata from them and adds the
-// extracted metadata to the relevant spans and metrics. The processor use the kubernetes API to discover all pods
-// running in a cluster, keeps a record of their IP addresses and interesting metadata. Upon receiving spans,
-// the processor tries to identify the source IP address of the service that sent the spans and matches
-// it with the in memory data. To find a k8s pod producing metrics, the processor looks at "host.hostname"
-// resource attribute which is set by prometheus receiver and some metrics instrumentation libraries.
-// If a match is found, the cached metadata is added to the spans and metrics as resource attributes.
+// extracted metadata to the relevant spans, metrics and logs. The processor uses the kubernetes API to discover all pods
+// running in a cluster, keeps a record of their IP addresses, pod UIDs and interesting metadata.
+// The rules for associating the data passing through the processor (spans, metrics and logs) with specific Pod Metadata are configured via "pod_association" key.
+// It represents a list of rules that are executed in the specified order until the first one is able to do the match.
+// Each rule is specified as a pair of from (representing the rule type) and name (representing the extracted key name).
+// Following rule types are available:
+//   from: "resource_attribute" - allows to specify the attribute name to lookup up in the list of attributes of the received Resource. The specified attribute, if it is present, identifies the Pod that is represented by the Resource.
+//     (the value can contain either IP address or Pod UID)
+//   from: "connection" - takes the IP attribute from connection context (if available) and automatically
+//     associates it with "k8s.pod.ip" attribute
+// Pod association configuration.
+// pod_association:
+//  - from: resource_attribute
+//    name: ip
+//  - from: resource_attribute
+//    name: k8s.pod.ip
+//  - from: resource_attribute
+//    name: host.name
+//  - from: connection
+//    name: ip
+//  - from: resource_attribute
+//    name: k8s.pod.uid
+//
+// If Pod association rules are not configured resources are associated with metadata only by connection's IP Address.
 //
 // RBAC
 //
@@ -36,8 +54,8 @@
 //
 // As an agent
 //
-// When running as an agent, the processor detects IP addresses of pods sending spans or metrics to the agent and uses
-// this information to extract metadata from pods. When running as an agent, it is important to apply
+// When running as an agent, the processor detects IP addresses of pods sending spans, metrics or logs to the agent
+// and uses this information to extract metadata from pods. When running as an agent, it is important to apply
 // a discovery filter so that the processor only discovers pods from the same host that it is running on. Not using
 // such a filter can result in unnecessary resource usage especially on very large clusters. Once the filter is applied,
 // each processor will only query the k8s API for pods running on it's own node.
@@ -75,10 +93,11 @@
 // The processor can be deployed both as an agent or as a collector.
 //
 // When running as a collector, the processor cannot correctly detect the IP address of the pods generating
-// the spans when it receives the spans from an agent instead of receiving them directly from the pods. To
+// the telemetry data without any of the well-known IP attributes, when it receives them
+// from an agent instead of receiving them directly from the pods. To
 // workaround this issue, agents deployed with the k8s_tagger processor can be configured to detect
-// the IP addresses and forward them along with the span resources. Collector can then match this IP address
-// with k8s pods and enrich the spans with the metadata. In order to set this up, you'll need to complete the
+// the IP addresses and forward them along with the telemetry data resources. Collector can then match this IP address
+// with k8s pods and enrich the records with the metadata. In order to set this up, you'll need to complete the
 // following steps:
 //
 // 1. Setup agents in passthrough mode
@@ -88,16 +107,13 @@
 //    k8s_tagger:
 //      passthrough: true
 //
-// This will ensure that the agents detect the IP address as add it as an attribute to all span resources.
+// This will ensure that the agents detect the IP address as add it as an attribute to all telemetry resources.
 // Agents will not make any k8s API calls, do any discovery of pods or extract any metadata.
 //
 // 2. Configure the collector as usual
 // No special configuration changes are needed to be made on the collector. It'll automatically detect
-// the IP address of spans sent by the agents as well as directly by other services/pods.
+// the IP address of spans, logs and metrics sent by the agents as well as directly by other services/pods.
 //
-// This approach is also relevant for metrics data since it's not guaranteed that all the metric formats
-// that used to send data from agent to collector preserve "host.hostname" attribute. We need to rely on an additional
-// attribute keeping a k8s pod IP value in the passthrough mode.
 //
 // Caveats
 //
@@ -107,7 +123,8 @@
 // Host networking mode
 //
 // The processor cannot correct identify pods running in the host network mode and
-// enriching spans generated by such pods is not supported at the moment.
+// enriching telemetry data generated by such pods is not supported at the moment, unless the attributes contain
+// information about the source IP.
 //
 // As a sidecar
 //

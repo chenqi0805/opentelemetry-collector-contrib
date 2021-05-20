@@ -23,21 +23,19 @@ import (
 	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/common/k8sconfig"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/k8sconfig"
 )
 
 const (
 	podNodeField            = "spec.nodeName"
 	ignoreAnnotation string = "opentelemetry.io/k8s-processor/ignore"
 
-	tagClusterName    = "k8s.cluster.name"
-	tagDeploymentName = "k8s.deployment.name"
-	tagNamespaceName  = "k8s.namespace.name"
-	tagNodeName       = "k8s.node.name"
-	tagPodName        = "k8s.pod.name"
-	tagPodUID         = "k8s.pod.uid"
-	tagStartTime      = "k8s.pod.startTime"
+	tagNodeName  = "k8s.node.name"
+	tagStartTime = "k8s.pod.startTime"
 )
+
+// PodIdentifier is a custom type to represent IP Address or Pod UID
+type PodIdentifier string
 
 var (
 	// TODO: move these to config with default values
@@ -51,13 +49,13 @@ var (
 
 // Client defines the main interface that allows querying pods by metadata.
 type Client interface {
-	GetPodByIP(string) (*Pod, bool)
+	GetPod(PodIdentifier) (*Pod, bool)
 	Start()
 	Stop()
 }
 
 // ClientProvider defines a func type that returns a new Client.
-type ClientProvider func(*zap.Logger, k8sconfig.APIConfig, ExtractionRules, Filters, APIClientsetProvider, InformerProvider) (Client, error)
+type ClientProvider func(*zap.Logger, k8sconfig.APIConfig, ExtractionRules, Filters, []Association, APIClientsetProvider, InformerProvider) (Client, error)
 
 // APIClientsetProvider defines a func type that initializes and return a new kubernetes
 // Clientset object.
@@ -67,6 +65,7 @@ type APIClientsetProvider func(config k8sconfig.APIConfig) (kubernetes.Interface
 type Pod struct {
 	Name       string
 	Address    string
+	PodUID     string
 	Attributes map[string]string
 	StartTime  *metav1.Time
 	Ignore     bool
@@ -75,9 +74,11 @@ type Pod struct {
 }
 
 type deleteRequest struct {
-	ip   string
-	name string
-	ts   time.Time
+	// id is identifier (IP address or Pod UID) of pod to remove from pods map
+	id PodIdentifier
+	// name contains name of pod to remove from pods map
+	podName string
+	ts      time.Time
 }
 
 // Filters is used to instruct the client on how to filter out k8s pods.
@@ -129,4 +130,15 @@ type FieldExtractionRule struct {
 	// Regex is a regular expression used to extract a sub-part of a field value.
 	// Full value is extracted when no regexp is provided.
 	Regex *regexp.Regexp
+}
+
+// Associations represent a list of rules for Pod metadata associations with resources
+type Associations struct {
+	Associations []Association
+}
+
+// Association represents one association rule
+type Association struct {
+	From string
+	Name string
 }

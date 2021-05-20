@@ -20,58 +20,43 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"go.opentelemetry.io/collector/config/configerror"
-	"go.opentelemetry.io/collector/config/configmodels"
+	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/config"
+	"go.opentelemetry.io/collector/config/configcheck"
 	"go.uber.org/zap"
 )
 
 func TestCreateDefaultConfig(t *testing.T) {
-	factory := Factory{}
-	cfg := factory.CreateDefaultConfig()
+	cfg := createDefaultConfig()
 	assert.NotNil(t, cfg, "failed to create default config")
-}
-
-func TestCreateMetricsExporter(t *testing.T) {
-	factory := Factory{}
-	cfg := factory.CreateDefaultConfig()
-
-	_, err := factory.CreateMetricsExporter(zap.NewNop(), cfg)
-	assert.Error(t, err, configerror.ErrDataTypeIsNotSupported)
+	assert.NoError(t, configcheck.ValidateConfig(cfg))
 }
 
 func TestCreateInstanceViaFactory(t *testing.T) {
-	factory := Factory{}
 
-	cfg := factory.CreateDefaultConfig()
+	cfg := createDefaultConfig()
 
 	// Default config doesn't have default URL so creating from it should
 	// fail.
-	exp, err := factory.CreateTraceExporter(
-		zap.NewNop(),
-		cfg)
+	params := component.ExporterCreateParams{Logger: zap.NewNop()}
+	exp, err := createTracesExporter(context.Background(), params, cfg)
 	assert.Error(t, err)
 	assert.Nil(t, exp)
 
 	// Endpoint doesn't have a default value so set it directly.
 	expCfg := cfg.(*Config)
 	expCfg.URL = "http://some.target.org:12345/api/traces"
-	exp, err = factory.CreateTraceExporter(
-		zap.NewNop(),
-		cfg)
+	exp, err = createTracesExporter(context.Background(), params, cfg)
 	assert.NoError(t, err)
 	assert.NotNil(t, exp)
 
 	assert.NoError(t, exp.Shutdown(context.Background()))
 }
 
-func TestFactory_CreateTraceExporter(t *testing.T) {
-	f := &Factory{}
+func TestFactory_CreateTracesExporter(t *testing.T) {
 	config := &Config{
-		ExporterSettings: configmodels.ExporterSettings{
-			TypeVal: configmodels.Type(typeStr),
-			NameVal: typeStr,
-		},
-		URL: "http://some.other.location/api/traces",
+		ExporterSettings: config.NewExporterSettings(config.NewID(typeStr)),
+		URL:              "http://some.other.location/api/traces",
 		Headers: map[string]string{
 			"added-entry": "added value",
 			"dot.test":    "test",
@@ -79,12 +64,13 @@ func TestFactory_CreateTraceExporter(t *testing.T) {
 		Timeout: 2 * time.Second,
 	}
 
-	te, err := f.CreateTraceExporter(zap.NewNop(), config)
+	params := component.ExporterCreateParams{Logger: zap.NewNop()}
+	te, err := createTracesExporter(context.Background(), params, config)
 	assert.NoError(t, err)
 	assert.NotNil(t, te)
 }
 
-func TestFactory_CreateTraceExporterFails(t *testing.T) {
+func TestFactory_CreateTracesExporterFails(t *testing.T) {
 	tests := []struct {
 		name         string
 		config       *Config
@@ -93,41 +79,32 @@ func TestFactory_CreateTraceExporterFails(t *testing.T) {
 		{
 			name: "empty_url",
 			config: &Config{
-				ExporterSettings: configmodels.ExporterSettings{
-					TypeVal: configmodels.Type(typeStr),
-					NameVal: typeStr,
-				},
+				ExporterSettings: config.NewExporterSettings(config.NewID(typeStr)),
 			},
 			errorMessage: "\"jaeger_thrift\" config requires a valid \"url\": parse \"\": empty url",
 		},
 		{
 			name: "invalid_url",
 			config: &Config{
-				ExporterSettings: configmodels.ExporterSettings{
-					TypeVal: configmodels.Type(typeStr),
-					NameVal: typeStr,
-				},
-				URL: ".localhost:123",
+				ExporterSettings: config.NewExporterSettings(config.NewID(typeStr)),
+				URL:              ".localhost:123",
 			},
 			errorMessage: "\"jaeger_thrift\" config requires a valid \"url\": parse \".localhost:123\": invalid URI for request",
 		},
 		{
 			name: "negative_duration",
 			config: &Config{
-				ExporterSettings: configmodels.ExporterSettings{
-					TypeVal: configmodels.Type(typeStr),
-					NameVal: typeStr,
-				},
-				URL:     "localhost:123",
-				Timeout: -2 * time.Second,
+				ExporterSettings: config.NewExporterSettings(config.NewID(typeStr)),
+				URL:              "localhost:123",
+				Timeout:          -2 * time.Second,
 			},
 			errorMessage: "\"jaeger_thrift\" config requires a positive value for \"timeout\"",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &Factory{}
-			te, err := f.CreateTraceExporter(zap.NewNop(), tt.config)
+			params := component.ExporterCreateParams{Logger: zap.NewNop()}
+			te, err := createTracesExporter(context.Background(), params, tt.config)
 			assert.EqualError(t, err, tt.errorMessage)
 			assert.Nil(t, te)
 		})

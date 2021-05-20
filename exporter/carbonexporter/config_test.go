@@ -15,55 +15,45 @@
 package carbonexporter
 
 import (
+	"context"
 	"path"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/config"
-	"go.opentelemetry.io/collector/config/configmodels"
+	"go.opentelemetry.io/collector/config/configtest"
 	"go.uber.org/zap"
 )
 
 func TestLoadConfig(t *testing.T) {
-	factories, err := config.ExampleComponents()
+	factories, err := componenttest.NopFactories()
 	assert.Nil(t, err)
 
-	factory := &Factory{}
-	factories.Exporters[configmodels.Type(typeStr)] = factory
-	cfg, err := config.LoadConfigFile(t, path.Join(".", "testdata", "config.yaml"), factories)
+	factory := NewFactory()
+	factories.Exporters[typeStr] = factory
+	cfg, err := configtest.LoadConfigFile(t, path.Join(".", "testdata", "config.yaml"), factories)
 
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
-	e0 := cfg.Exporters["carbon"]
+	e0 := cfg.Exporters[config.NewID(typeStr)]
 
 	defaultCfg := factory.CreateDefaultConfig().(*Config)
 	assert.Equal(t, defaultCfg, e0)
-	assert.Equal(t, defaultCfg, defaultConfig())
 
-	expectedName := "carbon/allsettings"
-
-	e1 := cfg.Exporters[expectedName]
+	e1 := cfg.Exporters[config.NewIDWithName(typeStr, "allsettings")]
 	expectedCfg := Config{
-		ExporterSettings: configmodels.ExporterSettings{
-			TypeVal: configmodels.Type(typeStr),
-			NameVal: expectedName,
-		},
-		Endpoint: "localhost:8080",
-		Timeout:  10 * time.Second,
+		ExporterSettings: config.NewExporterSettings(config.NewIDWithName(typeStr, "allsettings")),
+		Endpoint:         "localhost:8080",
+		Timeout:          10 * time.Second,
 	}
 	assert.Equal(t, &expectedCfg, e1)
 
-	te, err := factory.CreateMetricsExporter(zap.NewNop(), e1)
+	te, err := factory.CreateMetricsExporter(context.Background(), component.ExporterCreateParams{Logger: zap.NewNop()}, e1)
 	require.NoError(t, err)
 	require.NotNil(t, te)
-}
-
-func Test_setDefaults(t *testing.T) {
-	// Zero-value Config must match default config createcd via factory.
-	cfg := setDefaults(Config{})
-	factoryDefaultCfg := (&Factory{}).CreateDefaultConfig()
-	assert.Equal(t, factoryDefaultCfg, &cfg)
 }

@@ -1,4 +1,4 @@
-// Copyright 2019, OpenTelemetry Authors
+// Copyright The OpenTelemetry Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,22 +17,25 @@ package sapmexporter
 import (
 	"path"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/config"
-	"go.opentelemetry.io/collector/config/configmodels"
+	"go.opentelemetry.io/collector/config/configtest"
+	"go.opentelemetry.io/collector/exporter/exporterhelper"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/common/splunk"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/splunk"
 )
 
 func TestLoadConfig(t *testing.T) {
-	facotries, err := config.ExampleComponents()
+	facotries, err := componenttest.NopFactories()
 	assert.Nil(t, err)
 
-	factory := &Factory{}
-	facotries.Exporters[configmodels.Type(typeStr)] = factory
-	cfg, err := config.LoadConfigFile(
+	factory := NewFactory()
+	facotries.Exporters[config.Type(typeStr)] = factory
+	cfg, err := configtest.LoadConfigFile(
 		t, path.Join(".", "testdata", "config.yaml"), facotries,
 	)
 
@@ -41,19 +44,33 @@ func TestLoadConfig(t *testing.T) {
 
 	assert.Equal(t, len(cfg.Exporters), 2)
 
-	r0 := cfg.Exporters["sapm"]
+	r0 := cfg.Exporters[config.NewID(typeStr)]
 	assert.Equal(t, r0, factory.CreateDefaultConfig())
 
-	r1 := cfg.Exporters["sapm/customname"].(*Config)
+	r1 := cfg.Exporters[config.NewIDWithName(typeStr, "customname")].(*Config)
 	assert.Equal(t, r1,
 		&Config{
-			ExporterSettings: configmodels.ExporterSettings{TypeVal: configmodels.Type(typeStr), NameVal: "sapm/customname"},
+			ExporterSettings: config.NewExporterSettings(config.NewIDWithName(typeStr, "customname")),
 			Endpoint:         "test-endpoint",
 			AccessToken:      "abcd1234",
 			NumWorkers:       3,
 			MaxConnections:   45,
 			AccessTokenPassthroughConfig: splunk.AccessTokenPassthroughConfig{
 				AccessTokenPassthrough: false,
+			},
+			TimeoutSettings: exporterhelper.TimeoutSettings{
+				Timeout: 10 * time.Second,
+			},
+			RetrySettings: exporterhelper.RetrySettings{
+				Enabled:         true,
+				InitialInterval: 10 * time.Second,
+				MaxInterval:     1 * time.Minute,
+				MaxElapsedTime:  10 * time.Minute,
+			},
+			QueueSettings: exporterhelper.QueueSettings{
+				Enabled:      true,
+				NumConsumers: 2,
+				QueueSize:    10,
 			},
 		})
 }

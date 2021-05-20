@@ -19,7 +19,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config/configmodels"
+	"go.opentelemetry.io/collector/config"
 	"go.uber.org/zap"
 )
 
@@ -28,7 +28,7 @@ func TestSetupMetadataExporters(t *testing.T) {
 		metadataConsumers []metadataConsumer
 	}
 	type args struct {
-		exporters                   map[configmodels.Exporter]component.Exporter
+		exporters                   map[config.ComponentID]component.Exporter
 		metadataExportersFromConfig []string
 	}
 	tests := []struct {
@@ -41,22 +41,22 @@ func TestSetupMetadataExporters(t *testing.T) {
 			"Unsupported exporter",
 			fields{},
 			args{
-				exporters: map[configmodels.Exporter]component.Exporter{
-					mockExporterConfig{ExporterName: "exampleexporter"}: MockExporter{},
+				exporters: map[config.ComponentID]component.Exporter{
+					config.NewID("nop"): MockExporter{},
 				},
-				metadataExportersFromConfig: []string{"exampleexporter"},
+				metadataExportersFromConfig: []string{"nop"},
 			},
 			true,
 		},
 		{
 			"Supported exporter",
 			fields{
-				metadataConsumers: []metadataConsumer{(&mockExporterWithK8sMetadata{}).ConsumeKubernetesMetadata},
+				metadataConsumers: []metadataConsumer{(&mockExporterWithK8sMetadata{}).ConsumeMetadata},
 			},
-			args{exporters: map[configmodels.Exporter]component.Exporter{
-				mockExporterConfig{ExporterName: "exampleexporter"}: mockExporterWithK8sMetadata{},
+			args{exporters: map[config.ComponentID]component.Exporter{
+				config.NewID("nop"): mockExporterWithK8sMetadata{},
 			},
-				metadataExportersFromConfig: []string{"exampleexporter"},
+				metadataExportersFromConfig: []string{"nop"},
 			},
 			false,
 		},
@@ -65,10 +65,10 @@ func TestSetupMetadataExporters(t *testing.T) {
 			fields{
 				metadataConsumers: []metadataConsumer{},
 			},
-			args{exporters: map[configmodels.Exporter]component.Exporter{
-				mockExporterConfig{ExporterName: "exampleexporter"}: mockExporterWithK8sMetadata{},
+			args{exporters: map[config.ComponentID]component.Exporter{
+				config.NewID("nop"): mockExporterWithK8sMetadata{},
 			},
-				metadataExportersFromConfig: []string{"exampleexporter/1"},
+				metadataExportersFromConfig: []string{"nop/1"},
 			},
 			true,
 		},

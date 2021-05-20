@@ -18,156 +18,187 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
 	"testing"
 	"time"
 
-	metricspb "github.com/census-instrumentation/opencensus-proto/gen-go/metrics/v1"
-	"github.com/golang/protobuf/proto"
-	"github.com/golang/protobuf/ptypes/timestamp"
 	sfxpb "github.com/signalfx/com_signalfx_metrics_protobuf/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/component/componenterror"
 	"go.opentelemetry.io/collector/component/componenttest"
+	"go.opentelemetry.io/collector/config"
+	"go.opentelemetry.io/collector/config/confighttp"
 	"go.opentelemetry.io/collector/config/configtls"
 	"go.opentelemetry.io/collector/consumer"
-	"go.opentelemetry.io/collector/consumer/consumerdata"
-	"go.opentelemetry.io/collector/exporter/exportertest"
+	"go.opentelemetry.io/collector/consumer/consumertest"
+	"go.opentelemetry.io/collector/consumer/pdata"
 	"go.opentelemetry.io/collector/testutil"
-	"go.opentelemetry.io/collector/testutil/metricstestutil"
 	"go.uber.org/zap"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/signalfxexporter"
 )
 
 func Test_signalfxeceiver_New(t *testing.T) {
-	defaultConfig := (&Factory{}).CreateDefaultConfig().(*Config)
+	defaultConfig := createDefaultConfig().(*Config)
 	type args struct {
 		config       Config
-		nextConsumer consumer.MetricsConsumerOld
+		nextConsumer consumer.Metrics
 	}
 	tests := []struct {
-		name    string
-		args    args
-		wantErr error
+		name         string
+		args         args
+		wantStartErr error
 	}{
 		{
 			name: "nil_nextConsumer",
 			args: args{
 				config: *defaultConfig,
 			},
-			wantErr: errNilNextConsumer,
+			wantStartErr: componenterror.ErrNilNextConsumer,
 		},
 		{
 			name: "default_endpoint",
 			args: args{
 				config:       *defaultConfig,
-				nextConsumer: new(exportertest.SinkMetricsExporterOld),
+				nextConsumer: consumertest.NewNop(),
 			},
 		},
 		{
 			name: "happy_path",
 			args: args{
 				config: Config{
-					Endpoint: "localhost:1234",
+					HTTPServerSettings: confighttp.HTTPServerSettings{
+						Endpoint: "localhost:1234",
+					},
 				},
-				nextConsumer: new(exportertest.SinkMetricsExporterOld),
+				nextConsumer: consumertest.NewNop(),
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := New(zap.NewNop(), tt.args.config, tt.args.nextConsumer)
-			assert.Equal(t, tt.wantErr, err)
-			if err == nil {
-				assert.NotNil(t, got)
-			} else {
-				assert.Nil(t, got)
+			got := newReceiver(zap.NewNop(), tt.args.config)
+			if tt.args.nextConsumer != nil {
+				got.RegisterMetricsConsumer(tt.args.nextConsumer)
 			}
+			err := got.Start(context.Background(), componenttest.NewNopHost())
+			assert.Equal(t, tt.wantStartErr, err)
 		})
 	}
 }
 
 func Test_signalfxeceiver_EndToEnd(t *testing.T) {
-	addr := testutil.GetAvailableLocalAddress(t)
-	cfg := (&Factory{}).CreateDefaultConfig().(*Config)
+	port := testutil.GetAvailablePort(t)
+	addr := fmt.Sprintf("localhost:%d", port)
+	cfg := createDefaultConfig().(*Config)
 	cfg.Endpoint = addr
-	sink := new(exportertest.SinkMetricsExporterOld)
-	r, err := New(zap.NewNop(), *cfg, sink)
-	require.NoError(t, err)
+	sink := new(consumertest.MetricsSink)
+	r := newReceiver(zap.NewNop(), *cfg)
+	r.RegisterMetricsConsumer(sink)
 
 	require.NoError(t, r.Start(context.Background(), componenttest.NewNopHost()))
 	runtime.Gosched()
 	defer r.Shutdown(context.Background())
-	require.Equal(t, componenterror.ErrAlreadyStarted, r.Start(context.Background(), componenttest.NewNopHost()))
 
 	unixSecs := int64(1574092046)
 	unixNSecs := int64(11 * time.Millisecond)
-	tsUnix := time.Unix(unixSecs, unixNSecs)
-	doubleVal := 1234.5678
-	doublePt := metricstestutil.Double(tsUnix, doubleVal)
-	int64Val := int64(123)
-	int64Pt := &metricspb.Point{
-		Timestamp: metricstestutil.Timestamp(tsUnix),
-		Value:     &metricspb.Point_Int64Value{Int64Value: int64Val},
+	ts := pdata.TimestampFromTime(time.Unix(unixSecs, unixNSecs))
+
+	const doubleVal = 1234.5678
+	const int64Val = int64(123)
+
+	want := pdata.NewMetrics()
+	ilm := want.ResourceMetrics().AppendEmpty().InstrumentationLibraryMetrics().AppendEmpty()
+
+	{
+		m := ilm.Metrics().AppendEmpty()
+		m.SetName("gauge_double_with_dims")
+		m.SetDataType(pdata.MetricDataTypeDoubleGauge)
+		doublePt := m.DoubleGauge().DataPoints().AppendEmpty()
+		doublePt.SetTimestamp(ts)
+		doublePt.SetValue(doubleVal)
 	}
-	want := consumerdata.MetricsData{
-		Metrics: []*metricspb.Metric{
-			metricstestutil.Gauge("gauge_double_with_dims", nil, metricstestutil.Timeseries(tsUnix, nil, doublePt)),
-			metricstestutil.GaugeInt("gauge_int_with_dims", nil, metricstestutil.Timeseries(tsUnix, nil, int64Pt)),
-			metricstestutil.Cumulative("cumulative_double_with_dims", nil, metricstestutil.Timeseries(tsUnix, nil, doublePt)),
-			metricstestutil.CumulativeInt("cumulative_int_with_dims", nil, metricstestutil.Timeseries(tsUnix, nil, int64Pt)),
-		},
+	{
+		m := ilm.Metrics().AppendEmpty()
+		m.SetName("gauge_int_with_dims")
+		m.SetDataType(pdata.MetricDataTypeIntGauge)
+		int64Pt := m.IntGauge().DataPoints().AppendEmpty()
+		int64Pt.SetTimestamp(ts)
+		int64Pt.SetValue(int64Val)
+	}
+	{
+		m := ilm.Metrics().AppendEmpty()
+		m.SetName("cumulative_double_with_dims")
+		m.SetDataType(pdata.MetricDataTypeDoubleSum)
+		m.DoubleSum().SetAggregationTemporality(pdata.AggregationTemporalityCumulative)
+		m.DoubleSum().SetIsMonotonic(true)
+		doublePt := m.DoubleSum().DataPoints().AppendEmpty()
+		doublePt.SetTimestamp(ts)
+		doublePt.SetValue(doubleVal)
+	}
+	{
+		m := ilm.Metrics().AppendEmpty()
+		m.SetName("cumulative_int_with_dims")
+		m.SetDataType(pdata.MetricDataTypeIntSum)
+		m.IntSum().SetAggregationTemporality(pdata.AggregationTemporalityCumulative)
+		m.IntSum().SetIsMonotonic(true)
+		int64Pt := m.IntSum().DataPoints().AppendEmpty()
+		int64Pt.SetTimestamp(ts)
+		int64Pt.SetValue(int64Val)
 	}
 
 	expCfg := &signalfxexporter.Config{
-		IngestURL:   "http://" + addr + "/v2/datapoint",
-		APIURL:      "http://localhost",
-		AccessToken: "access_token",
+		ExporterSettings: config.NewExporterSettings(config.NewID("signalfx")),
+		IngestURL:        "http://" + addr + "/v2/datapoint",
+		APIURL:           "http://localhost",
+		AccessToken:      "access_token",
 	}
-	exp, err := signalfxexporter.New(expCfg, zap.NewNop())
+	exp, err := signalfxexporter.NewFactory().CreateMetricsExporter(
+		context.Background(),
+		component.ExporterCreateParams{Logger: zap.NewNop()},
+		expCfg)
 	require.NoError(t, err)
 	require.NoError(t, exp.Start(context.Background(), componenttest.NewNopHost()))
-	defer exp.Shutdown(context.Background())
-	require.NoError(t, exp.ConsumeMetricsData(context.Background(), want))
-	// Description, unit and start time are expected to be dropped during conversions.
-	for _, metric := range want.Metrics {
-		metric.MetricDescriptor.Description = ""
-		metric.MetricDescriptor.Unit = ""
-		for _, ts := range metric.Timeseries {
-			ts.StartTimestamp = nil
+	assert.Eventually(t, func() bool {
+		conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
+		if err == nil && conn != nil {
+			conn.Close()
+			return true
 		}
-	}
+		return false
+	}, 10*time.Second, 5*time.Millisecond, "failed to wait for the port to be open")
+	defer exp.Shutdown(context.Background())
+	require.NoError(t, exp.ConsumeMetrics(context.Background(), want))
 
-	got := sink.AllMetrics()
-	require.Equal(t, 1, len(got))
-	assert.Equal(t, want, got[0])
-
-	assert.NoError(t, r.Shutdown(context.Background()))
-	assert.Equal(t, componenterror.ErrAlreadyStopped, r.Shutdown(context.Background()))
+	mds := sink.AllMetrics()
+	require.Len(t, mds, 1)
+	got := mds[0]
+	require.Equal(t, 1, got.ResourceMetrics().Len())
+	assert.Equal(t, want, got)
 }
 
 func Test_sfxReceiver_handleReq(t *testing.T) {
-	config := (&Factory{}).CreateDefaultConfig().(*Config)
+	config := createDefaultConfig().(*Config)
 	config.Endpoint = "localhost:0" // Actually not creating the endpoint
 
 	currentTime := time.Now().Unix() * 1e3
-	sFxMsg := buildSFxMsg(currentTime, 13, 3)
+	sFxMsg := buildSFxDatapointMsg(currentTime, 13, 3)
 
 	tests := []struct {
-		name           string
-		req            *http.Request
-		assertResponse func(t *testing.T, status int, body string)
+		name             string
+		req              *http.Request
+		skipRegistration bool
+		assertResponse   func(t *testing.T, status int, body string)
 	}{
 		{
 			name: "incorrect_method",
@@ -175,6 +206,21 @@ func Test_sfxReceiver_handleReq(t *testing.T) {
 			assertResponse: func(t *testing.T, status int, body string) {
 				assert.Equal(t, http.StatusBadRequest, status)
 				assert.Equal(t, responseInvalidMethod, body)
+			},
+		},
+		{
+			name: "incorrect_pipeline",
+			req: func() *http.Request {
+				msgBytes, err := sFxMsg.Marshal()
+				require.NoError(t, err)
+				req := httptest.NewRequest("POST", "http://localhost", bytes.NewReader(msgBytes))
+				req.Header.Set("Content-Type", "application/x-protobuf")
+				return req
+			}(),
+			skipRegistration: true,
+			assertResponse: func(t *testing.T, status int, body string) {
+				assert.Equal(t, http.StatusBadRequest, status)
+				assert.Equal(t, responseErrMetricsNotConfigured, body)
 			},
 		},
 		{
@@ -242,21 +288,21 @@ func Test_sfxReceiver_handleReq(t *testing.T) {
 		{
 			name: "msg_accepted",
 			req: func() *http.Request {
-				msgBytes, err := proto.Marshal(sFxMsg)
+				msgBytes, err := sFxMsg.Marshal()
 				require.NoError(t, err)
 				req := httptest.NewRequest("POST", "http://localhost", bytes.NewReader(msgBytes))
 				req.Header.Set("Content-Type", "application/x-protobuf")
 				return req
 			}(),
 			assertResponse: func(t *testing.T, status int, body string) {
-				assert.Equal(t, http.StatusAccepted, status)
+				assert.Equal(t, http.StatusOK, status)
 				assert.Equal(t, responseOK, body)
 			},
 		},
 		{
 			name: "msg_accepted_gzipped",
 			req: func() *http.Request {
-				msgBytes, err := proto.Marshal(sFxMsg)
+				msgBytes, err := sFxMsg.Marshal()
 				require.NoError(t, err)
 
 				var buf bytes.Buffer
@@ -271,14 +317,14 @@ func Test_sfxReceiver_handleReq(t *testing.T) {
 				return req
 			}(),
 			assertResponse: func(t *testing.T, status int, body string) {
-				assert.Equal(t, http.StatusAccepted, status)
+				assert.Equal(t, http.StatusOK, status)
 				assert.Equal(t, responseOK, body)
 			},
 		},
 		{
 			name: "bad_gzipped_msg",
 			req: func() *http.Request {
-				msgBytes, err := proto.Marshal(sFxMsg)
+				msgBytes, err := sFxMsg.Marshal()
 				require.NoError(t, err)
 
 				req := httptest.NewRequest("POST", "http://localhost", bytes.NewReader(msgBytes))
@@ -295,13 +341,189 @@ func Test_sfxReceiver_handleReq(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sink := new(exportertest.SinkMetricsExporterOld)
-			rcv, err := New(zap.NewNop(), *config, sink)
+			sink := new(consumertest.MetricsSink)
+			rcv := newReceiver(zap.NewNop(), *config)
+			if !tt.skipRegistration {
+				rcv.RegisterMetricsConsumer(sink)
+			}
+
+			w := httptest.NewRecorder()
+			rcv.handleDatapointReq(w, tt.req)
+
+			resp := w.Result()
+			respBytes, err := ioutil.ReadAll(resp.Body)
 			assert.NoError(t, err)
 
-			r := rcv.(*sfxReceiver)
+			var bodyStr string
+			assert.NoError(t, json.Unmarshal(respBytes, &bodyStr))
+
+			tt.assertResponse(t, resp.StatusCode, bodyStr)
+		})
+	}
+}
+
+func Test_sfxReceiver_handleEventReq(t *testing.T) {
+	config := (NewFactory()).CreateDefaultConfig().(*Config)
+	config.Endpoint = "localhost:0" // Actually not creating the endpoint
+
+	currentTime := time.Now().Unix() * 1e3
+	sFxMsg := buildSFxEventMsg(currentTime, 3)
+
+	tests := []struct {
+		name             string
+		req              *http.Request
+		skipRegistration bool
+		assertResponse   func(t *testing.T, status int, body string)
+	}{
+		{
+			name: "incorrect_method",
+			req:  httptest.NewRequest("PUT", "http://localhost", nil),
+			assertResponse: func(t *testing.T, status int, body string) {
+				assert.Equal(t, http.StatusBadRequest, status)
+				assert.Equal(t, responseInvalidMethod, body)
+			},
+		},
+		{
+			name: "incorrect_pipeline",
+			req: func() *http.Request {
+				msgBytes, err := sFxMsg.Marshal()
+				require.NoError(t, err)
+				req := httptest.NewRequest("POST", "http://localhost", bytes.NewReader(msgBytes))
+				req.Header.Set("Content-Type", "application/x-protobuf")
+				return req
+			}(),
+			skipRegistration: true,
+			assertResponse: func(t *testing.T, status int, body string) {
+				assert.Equal(t, http.StatusBadRequest, status)
+				assert.Equal(t, responseErrLogsNotConfigured, body)
+			},
+		},
+		{
+			name: "incorrect_content_type",
+			req: func() *http.Request {
+				req := httptest.NewRequest("POST", "http://localhost", nil)
+				req.Header.Set("Content-Type", "application/not-protobuf")
+				return req
+			}(),
+			assertResponse: func(t *testing.T, status int, body string) {
+				assert.Equal(t, http.StatusUnsupportedMediaType, status)
+				assert.Equal(t, responseInvalidContentType, body)
+			},
+		},
+		{
+			name: "incorrect_content_encoding",
+			req: func() *http.Request {
+				req := httptest.NewRequest("POST", "http://localhost", nil)
+				req.Header.Set("Content-Type", "application/x-protobuf")
+				req.Header.Set("Content-Encoding", "superzipper")
+				return req
+			}(),
+			assertResponse: func(t *testing.T, status int, body string) {
+				assert.Equal(t, http.StatusUnsupportedMediaType, status)
+				assert.Equal(t, responseInvalidEncoding, body)
+			},
+		},
+		{
+			name: "fail_to_read_body",
+			req: func() *http.Request {
+				req := httptest.NewRequest("POST", "http://localhost", nil)
+				req.Body = badReqBody{}
+				req.Header.Set("Content-Type", "application/x-protobuf")
+				return req
+			}(),
+			assertResponse: func(t *testing.T, status int, body string) {
+				assert.Equal(t, http.StatusBadRequest, status)
+				assert.Equal(t, responseErrReadBody, body)
+			},
+		},
+		{
+			name: "bad_data_in_body",
+			req: func() *http.Request {
+				req := httptest.NewRequest("POST", "http://localhost", bytes.NewReader([]byte{1, 2, 3, 4}))
+				req.Header.Set("Content-Type", "application/x-protobuf")
+				return req
+			}(),
+			assertResponse: func(t *testing.T, status int, body string) {
+				assert.Equal(t, http.StatusBadRequest, status)
+				assert.Equal(t, responseErrUnmarshalBody, body)
+			},
+		},
+		{
+			name: "empty_body",
+			req: func() *http.Request {
+				req := httptest.NewRequest("POST", "http://localhost", bytes.NewReader(nil))
+				req.Header.Set("Content-Type", "application/x-protobuf")
+				return req
+			}(),
+			assertResponse: func(t *testing.T, status int, body string) {
+				assert.Equal(t, http.StatusOK, status)
+				assert.Equal(t, responseOK, body)
+			},
+		},
+		{
+			name: "msg_accepted",
+			req: func() *http.Request {
+				msgBytes, err := sFxMsg.Marshal()
+				require.NoError(t, err)
+				req := httptest.NewRequest("POST", "http://localhost", bytes.NewReader(msgBytes))
+				req.Header.Set("Content-Type", "application/x-protobuf")
+				return req
+			}(),
+			assertResponse: func(t *testing.T, status int, body string) {
+				assert.Equal(t, http.StatusOK, status)
+				assert.Equal(t, responseOK, body)
+			},
+		},
+		{
+			name: "msg_accepted_gzipped",
+			req: func() *http.Request {
+				msgBytes, err := sFxMsg.Marshal()
+				require.NoError(t, err)
+
+				var buf bytes.Buffer
+				gzipWriter := gzip.NewWriter(&buf)
+				_, err = gzipWriter.Write(msgBytes)
+				require.NoError(t, err)
+				require.NoError(t, gzipWriter.Close())
+
+				req := httptest.NewRequest("POST", "http://localhost", &buf)
+				req.Header.Set("Content-Type", "application/x-protobuf")
+				req.Header.Set("Content-Encoding", "gzip")
+				return req
+			}(),
+			assertResponse: func(t *testing.T, status int, body string) {
+				assert.Equal(t, http.StatusOK, status)
+				assert.Equal(t, responseOK, body)
+			},
+		},
+		{
+			name: "bad_gzipped_msg",
+			req: func() *http.Request {
+				msgBytes, err := sFxMsg.Marshal()
+				require.NoError(t, err)
+
+				req := httptest.NewRequest("POST", "http://localhost", bytes.NewReader(msgBytes))
+				req.Header.Set("Content-Type", "application/x-protobuf")
+				req.Header.Set("Content-Encoding", "gzip")
+				return req
+			}(),
+			assertResponse: func(t *testing.T, status int, body string) {
+				assert.Equal(t, http.StatusBadRequest, status)
+				assert.Equal(t, responseErrGzipReader, body)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sink := new(consumertest.LogsSink)
+			rcv := newReceiver(zap.NewNop(), *config)
+			if !tt.skipRegistration {
+				rcv.RegisterLogsConsumer(sink)
+			}
+
 			w := httptest.NewRecorder()
-			r.handleReq(w, tt.req)
+			rcv.handleEventReq(w, tt.req)
 
 			resp := w.Result()
 			respBytes, err := ioutil.ReadAll(resp.Body)
@@ -317,71 +539,49 @@ func Test_sfxReceiver_handleReq(t *testing.T) {
 
 func Test_sfxReceiver_TLS(t *testing.T) {
 	addr := testutil.GetAvailableLocalAddress(t)
-	cfg := (&Factory{}).CreateDefaultConfig().(*Config)
+	cfg := createDefaultConfig().(*Config)
 	cfg.Endpoint = addr
-	cfg.TLSCredentials = &configtls.TLSSetting{
-		CertFile: "./testdata/testcert.crt",
-		KeyFile:  "./testdata/testkey.key",
+	cfg.HTTPServerSettings.TLSSetting = &configtls.TLSServerSetting{
+		TLSSetting: configtls.TLSSetting{
+			CertFile: "./testdata/server.crt",
+			KeyFile:  "./testdata/server.key",
+		},
 	}
-	sink := new(exportertest.SinkMetricsExporterOld)
-	r, err := New(zap.NewNop(), *cfg, sink)
-	require.NoError(t, err)
+	sink := new(consumertest.MetricsSink)
+	r := newReceiver(zap.NewNop(), *cfg)
+	r.RegisterMetricsConsumer(sink)
 	defer r.Shutdown(context.Background())
 
-	// NewNopHost swallows errors so using NewErrorWaitingHost to catch any potential errors starting the
-	// receiver.
-	mh := componenttest.NewErrorWaitingHost()
+	mh := newAssertNoErrorHost(t)
 	require.NoError(t, r.Start(context.Background(), mh), "should not have failed to start metric reception")
 
 	// If there are errors reported through host.ReportFatalError() this will retrieve it.
-	receivedError, receivedErr := mh.WaitForFatalError(500 * time.Millisecond)
-	require.NoError(t, receivedErr, "should not have failed to start metric reception")
-	require.False(t, receivedError)
+	<-time.After(500 * time.Millisecond)
 	t.Log("Metric Reception Started")
 
 	msec := time.Now().Unix() * 1e3
-	want := consumerdata.MetricsData{
-		Metrics: []*metricspb.Metric{
-			{
-				MetricDescriptor: &metricspb.MetricDescriptor{
-					Name: "single",
-					Type: metricspb.MetricDescriptor_GAUGE_INT64,
-					LabelKeys: []*metricspb.LabelKey{
-						{Key: "k0"}, {Key: "k1"}, {Key: "k2"},
-					},
-				},
-				Timeseries: []*metricspb.TimeSeries{
-					{
-						LabelValues: []*metricspb.LabelValue{
-							{
-								Value:    "v0",
-								HasValue: true,
-							},
-							{
-								Value:    "v1",
-								HasValue: true,
-							},
-							{
-								Value:    "v2",
-								HasValue: true,
-							},
-						},
-						Points: []*metricspb.Point{{
-							Timestamp: &timestamp.Timestamp{
-								Seconds: msec / 1e3,
-								Nanos:   int32(msec%1e3) * 1e3,
-							},
-							Value: &metricspb.Point_Int64Value{Int64Value: 13},
-						}},
-					},
-				},
-			},
-		},
-	}
+
+	want := pdata.NewMetrics()
+	m := want.ResourceMetrics().AppendEmpty().InstrumentationLibraryMetrics().AppendEmpty().Metrics().AppendEmpty()
+
+	m.SetDataType(pdata.MetricDataTypeIntGauge)
+	m.SetName("single")
+	dps := m.IntGauge().DataPoints()
+	dp := dps.AppendEmpty()
+	dp.SetTimestamp(pdata.Timestamp(msec * 1e6))
+	dp.SetValue(13)
+
+	dp.LabelsMap().InitFromMap(map[string]string{
+		"k0": "v0",
+		"k1": "v1",
+		"k2": "v2",
+	})
+	dp.LabelsMap().Sort()
 
 	t.Log("Sending SignalFx metric data Request")
 
-	body, err := proto.Marshal(buildSFxMsg(msec, 13, 3))
+	sfxMsg := buildSFxDatapointMsg(msec, 13, 3)
+	body, err := sfxMsg.Marshal()
 	require.NoError(t, err, fmt.Sprintf("failed to marshal SFx message: %v", err))
 
 	url := fmt.Sprintf("https://%s/v2/datapoint", addr)
@@ -390,30 +590,35 @@ func Test_sfxReceiver_TLS(t *testing.T) {
 	require.NoErrorf(t, err, "should have no errors with new request: %v", err)
 	req.Header.Set("Content-Type", "application/x-protobuf")
 
-	caCert, err := ioutil.ReadFile("./testdata/testcert.crt")
-	require.NoErrorf(t, err, "failed to load certificate: %v", err)
-	caCertPool := x509.NewCertPool()
-	caCertPool.AppendCertsFromPEM(caCert)
-
+	tlscs := configtls.TLSClientSetting{
+		TLSSetting: configtls.TLSSetting{
+			CAFile:   "./testdata/ca.crt",
+			CertFile: "./testdata/client.crt",
+			KeyFile:  "./testdata/client.key",
+		},
+		ServerName: "localhost",
+	}
+	tls, errTLS := tlscs.LoadTLSConfig()
+	assert.NoError(t, errTLS)
 	client := &http.Client{
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				RootCAs: caCertPool,
-			},
+			TLSClientConfig: tls,
 		},
 	}
 
 	resp, err := client.Do(req)
 	require.NoErrorf(t, err, "should not have failed when sending to signalFx receiver %v", err)
-	assert.Equal(t, http.StatusAccepted, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	t.Log("SignalFx Request Received")
 
-	got := sink.AllMetrics()
-	require.Equal(t, 1, len(got))
-	assert.Equal(t, want, got[0])
+	mds := sink.AllMetrics()
+	require.Len(t, mds, 1)
+	got := mds[0]
+	require.Equal(t, 1, got.ResourceMetrics().Len())
+	assert.Equal(t, want, got)
 }
 
-func Test_sfxReceiver_AccessTokenPassthrough(t *testing.T) {
+func Test_sfxReceiver_DatapointAccessTokenPassthrough(t *testing.T) {
 	tests := []struct {
 		name        string
 		passthrough bool
@@ -443,26 +648,25 @@ func Test_sfxReceiver_AccessTokenPassthrough(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := (&Factory{}).CreateDefaultConfig().(*Config)
+			config := createDefaultConfig().(*Config)
 			config.Endpoint = "localhost:0"
 			config.AccessTokenPassthrough = tt.passthrough
 
-			sink := new(exportertest.SinkMetricsExporterOld)
-			rcv, err := New(zap.NewNop(), *config, sink)
-			assert.NoError(t, err)
+			sink := new(consumertest.MetricsSink)
+			rcv := newReceiver(zap.NewNop(), *config)
+			rcv.RegisterMetricsConsumer(sink)
 
 			currentTime := time.Now().Unix() * 1e3
-			sFxMsg := buildSFxMsg(currentTime, 13, 3)
-			msgBytes, _ := proto.Marshal(sFxMsg)
+			sFxMsg := buildSFxDatapointMsg(currentTime, 13, 3)
+			msgBytes, _ := sFxMsg.Marshal()
 			req := httptest.NewRequest("POST", "http://localhost", bytes.NewReader(msgBytes))
 			req.Header.Set("Content-Type", "application/x-protobuf")
 			if tt.token != "" {
 				req.Header.Set("x-sf-token", tt.token)
 			}
 
-			r := rcv.(*sfxReceiver)
 			w := httptest.NewRecorder()
-			r.handleReq(w, req)
+			rcv.handleDatapointReq(w, req)
 
 			resp := w.Result()
 			respBytes, err := ioutil.ReadAll(resp.Body)
@@ -471,15 +675,15 @@ func Test_sfxReceiver_AccessTokenPassthrough(t *testing.T) {
 			var bodyStr string
 			assert.NoError(t, json.Unmarshal(respBytes, &bodyStr))
 
-			assert.Equal(t, http.StatusAccepted, resp.StatusCode)
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
 			assert.Equal(t, responseOK, bodyStr)
 
-			got := sink.AllMetrics()
-			require.Equal(t, 1, len(got))
-
+			mds := sink.AllMetrics()
+			require.Len(t, mds, 1)
+			resource := mds[0].ResourceMetrics().At(0).Resource()
 			tokenLabel := ""
-			if got[0].Resource != nil && got[0].Resource.Labels != nil {
-				tokenLabel = got[0].Resource.Labels["com.splunk.signalfx.access_token"]
+			if label, ok := resource.Attributes().Get("com.splunk.signalfx.access_token"); ok {
+				tokenLabel = label.StringVal()
 			}
 
 			if tt.passthrough {
@@ -491,7 +695,84 @@ func Test_sfxReceiver_AccessTokenPassthrough(t *testing.T) {
 	}
 }
 
-func buildSFxMsg(time int64, value int64, dimensions uint) *sfxpb.DataPointUploadMessage {
+func Test_sfxReceiver_EventAccessTokenPassthrough(t *testing.T) {
+	tests := []struct {
+		name        string
+		passthrough bool
+		token       string
+	}{
+		{
+			name:        "No token provided and passthrough false",
+			passthrough: false,
+			token:       "",
+		},
+		{
+			name:        "No token provided and passthrough true",
+			passthrough: true,
+			token:       "",
+		},
+		{
+			name:        "token provided and passthrough false",
+			passthrough: false,
+			token:       "myToken",
+		},
+		{
+			name:        "token provided and passthrough true",
+			passthrough: true,
+			token:       "myToken",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := (NewFactory()).CreateDefaultConfig().(*Config)
+			config.Endpoint = "localhost:0"
+			config.AccessTokenPassthrough = tt.passthrough
+
+			sink := new(consumertest.LogsSink)
+			rcv := newReceiver(zap.NewNop(), *config)
+			rcv.RegisterLogsConsumer(sink)
+
+			currentTime := time.Now().Unix() * 1e3
+			sFxMsg := buildSFxEventMsg(currentTime, 3)
+			msgBytes, _ := sFxMsg.Marshal()
+			req := httptest.NewRequest("POST", "http://localhost", bytes.NewReader(msgBytes))
+			req.Header.Set("Content-Type", "application/x-protobuf")
+			if tt.token != "" {
+				req.Header.Set("x-sf-token", tt.token)
+			}
+
+			w := httptest.NewRecorder()
+			rcv.handleEventReq(w, req)
+
+			resp := w.Result()
+			respBytes, err := ioutil.ReadAll(resp.Body)
+			assert.NoError(t, err)
+
+			var bodyStr string
+			assert.NoError(t, json.Unmarshal(respBytes, &bodyStr))
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, responseOK, bodyStr)
+
+			got := sink.AllLogs()
+			require.Equal(t, 1, len(got))
+
+			tokenLabel := ""
+			if accessTokenAttr, ok := got[0].ResourceLogs().At(0).Resource().Attributes().Get("com.splunk.signalfx.access_token"); ok {
+				tokenLabel = accessTokenAttr.StringVal()
+			}
+
+			if tt.passthrough {
+				assert.Equal(t, tt.token, tokenLabel)
+			} else {
+				assert.Empty(t, tokenLabel)
+			}
+		})
+	}
+}
+
+func buildSFxDatapointMsg(time int64, value int64, dimensions uint) *sfxpb.DataPointUploadMessage {
 	return &sfxpb.DataPointUploadMessage{
 		Datapoints: []*sfxpb.DataPoint{
 			{
@@ -501,6 +782,27 @@ func buildSFxMsg(time int64, value int64, dimensions uint) *sfxpb.DataPointUploa
 					IntValue: int64Ptr(value),
 				},
 				MetricType: sfxTypePtr(sfxpb.MetricType_GAUGE),
+				Dimensions: buildNDimensions(dimensions),
+			},
+		},
+	}
+}
+
+func buildSFxEventMsg(time int64, dimensions uint) *sfxpb.EventUploadMessage {
+	return &sfxpb.EventUploadMessage{
+		Events: []*sfxpb.Event{
+			{
+				EventType: "single",
+				Timestamp: time,
+				Properties: []*sfxpb.Property{
+					{
+						Key: "a",
+						Value: &sfxpb.PropertyValue{
+							StrValue: strPtr("b"),
+						},
+					},
+				},
+				Category:   sfxCategoryPtr(sfxpb.EventCategory_USER_DEFINED),
 				Dimensions: buildNDimensions(dimensions),
 			},
 		},
@@ -517,4 +819,22 @@ func (b badReqBody) Read(p []byte) (n int, err error) {
 
 func (b badReqBody) Close() error {
 	return nil
+}
+
+// assertNoErrorHost implements a component.Host that asserts that there were no errors.
+type assertNoErrorHost struct {
+	component.Host
+	*testing.T
+}
+
+// newAssertNoErrorHost returns a new instance of assertNoErrorHost.
+func newAssertNoErrorHost(t *testing.T) component.Host {
+	return &assertNoErrorHost{
+		Host: componenttest.NewNopHost(),
+		T:    t,
+	}
+}
+
+func (aneh *assertNoErrorHost) ReportFatalError(err error) {
+	assert.NoError(aneh, err)
 }

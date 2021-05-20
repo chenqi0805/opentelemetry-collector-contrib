@@ -16,8 +16,10 @@ package collection
 
 import (
 	"reflect"
+	"time"
 
-	"go.opentelemetry.io/collector/consumer/consumerdata"
+	agentmetricspb "github.com/census-instrumentation/opencensus-proto/gen-go/agent/metrics/v1"
+	"go.opentelemetry.io/collector/consumer/pdata"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/api/autoscaling/v2beta1"
@@ -27,10 +29,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/cache"
+
+	metadata "github.com/open-telemetry/opentelemetry-collector-contrib/pkg/experimentalmetricmetadata"
 )
 
 // TODO: Consider moving some of these constants to
-// https://go.opentelemetry.io/collector/blob/master/translator/conventions/opentelemetry.go.
+// https://go.opentelemetry.io/collector/blob/main/translator/conventions/opentelemetry.go.
 
 // Resource label keys.
 const (
@@ -40,34 +44,15 @@ const (
 	containerType = "container"
 
 	// Resource labels keys for UID.
-	k8sKeyPodUID                   = "k8s.pod.uid"
-	k8sKeyNodeUID                  = "k8s.node.uid"
-	k8sKeyCronJobUID               = "k8s.cronjob.uid"
-	k8sKeyDeploymentUID            = "k8s.deployment.uid"
-	k8sKeyJobUID                   = "k8s.job.uid"
 	k8sKeyNamespaceUID             = "k8s.namespace.uid"
-	k8sKeyReplicaSetUID            = "k8s.replicaset.uid"
 	k8sKeyReplicationControllerUID = "k8s.replicationcontroller.uid"
-	k8sKeyStatefulSetUID           = "k8s.statefulset.uid"
-	k8sKeyDaemonSetUID             = "k8s.daemonset.uid"
 	k8sKeyHPAUID                   = "k8s.hpa.uid"
 	k8sKeyResourceQuotaUID         = "k8s.resourcequota.uid"
 
 	// Resource labels keys for Name.
-	k8sKeyCronJobName               = "k8s.cronjob.name"
-	k8sKeyNodeName                  = "k8s.node.name"
-	k8sKeyDeploymentName            = "k8s.deployment.name"
-	k8sKeyJobName                   = "k8s.job.name"
-	k8sKeyReplicaSetName            = "k8s.replicaset.name"
 	k8sKeyReplicationControllerName = "k8s.replicationcontroller.name"
-	k8sKeyStatefulSetName           = "k8s.statefulset.name"
-	k8sKeyDaemonSetName             = "k8s.daemonset.name"
 	k8sKeyHPAName                   = "k8s.hpa.name"
 	k8sKeyResourceQuotaName         = "k8s.resourcequota.name"
-
-	// Resource labels for container.
-	containerKeyID       = "container.id"
-	containerKeySpecName = "container.spec.name"
 
 	// Kubernetes resource kinds
 	k8sKindCronJob               = "CronJob"
@@ -76,7 +61,6 @@ const (
 	k8sKindJob                   = "Job"
 	k8sKindReplicationController = "ReplicationController"
 	k8sKindReplicaSet            = "ReplicaSet"
-	k8sKindService               = "Service"
 	k8sStatefulSet               = "StatefulSet"
 )
 
@@ -96,7 +80,7 @@ func NewDataCollector(logger *zap.Logger, nodeConditionsToReport []string) *Data
 	return &DataCollector{
 		logger: logger,
 		metricsStore: &metricsStore{
-			metricsCache: map[types.UID][]consumerdata.MetricsData{},
+			metricsCache: map[types.UID][]*agentmetricspb.ExportMetricsServiceRequest{},
 		},
 		metadataStore:          &metadataStore{},
 		nodeConditionsToReport: nodeConditionsToReport,
@@ -128,8 +112,8 @@ func (dc *DataCollector) UpdateMetricsStore(obj interface{}, rm []*resourceMetri
 	}
 }
 
-func (dc *DataCollector) CollectMetricData() []consumerdata.MetricsData {
-	return dc.metricsStore.getMetricData()
+func (dc *DataCollector) CollectMetricData(currentTime time.Time) pdata.Metrics {
+	return dc.metricsStore.getMetricData(currentTime)
 }
 
 // SyncMetrics updates the metric store with latest metrics from the kubernetes object.
@@ -173,11 +157,11 @@ func (dc *DataCollector) SyncMetrics(obj interface{}) {
 }
 
 // SyncMetadata updates the metric store with latest metrics from the kubernetes object
-func (dc *DataCollector) SyncMetadata(obj interface{}) map[ResourceID]*KubernetesMetadata {
-	km := map[ResourceID]*KubernetesMetadata{}
+func (dc *DataCollector) SyncMetadata(obj interface{}) map[metadata.ResourceID]*KubernetesMetadata {
+	km := map[metadata.ResourceID]*KubernetesMetadata{}
 	switch o := obj.(type) {
 	case *corev1.Pod:
-		km = getMetadataForPod(o, dc.metadataStore)
+		km = getMetadataForPod(o, dc.metadataStore, dc.logger)
 	case *corev1.Node:
 		km = getMetadataForNode(o)
 	case *corev1.ReplicationController:

@@ -18,6 +18,8 @@ import (
 	resourcepb "github.com/census-instrumentation/opencensus-proto/gen-go/resource/v1"
 	"go.opentelemetry.io/collector/translator/conventions"
 	appsv1 "k8s.io/api/apps/v1"
+
+	metadata "github.com/open-telemetry/opentelemetry-collector-contrib/pkg/experimentalmetricmetadata"
 )
 
 func getMetricsForDeployment(dep *appsv1.Deployment) []*resourceMetrics {
@@ -41,16 +43,16 @@ func getResourceForDeployment(dep *appsv1.Deployment) *resourcepb.Resource {
 	return &resourcepb.Resource{
 		Type: k8sType,
 		Labels: map[string]string{
-			k8sKeyDeploymentUID:               string(dep.UID),
-			k8sKeyDeploymentName:              dep.Name,
-			conventions.AttributeK8sNamespace: dep.Namespace,
-			conventions.AttributeK8sCluster:   dep.ClusterName,
+			conventions.AttributeK8sDeploymentUID: string(dep.UID),
+			conventions.AttributeK8sDeployment:    dep.Name,
+			conventions.AttributeK8sNamespace:     dep.Namespace,
+			conventions.AttributeK8sCluster:       dep.ClusterName,
 		},
 	}
 }
 
-func getMetadataForDeployment(dep *appsv1.Deployment) map[ResourceID]*KubernetesMetadata {
+func getMetadataForDeployment(dep *appsv1.Deployment) map[metadata.ResourceID]*KubernetesMetadata {
 	rm := getGenericMetadata(&dep.ObjectMeta, k8sKindDeployment)
-	rm.metadata[k8sKeyDeploymentName] = dep.Name
-	return map[ResourceID]*KubernetesMetadata{ResourceID(dep.UID): rm}
+	rm.metadata[conventions.AttributeK8sDeployment] = dep.Name
+	return map[metadata.ResourceID]*KubernetesMetadata{metadata.ResourceID(dep.UID): rm}
 }

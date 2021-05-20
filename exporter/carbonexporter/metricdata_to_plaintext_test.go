@@ -20,11 +20,12 @@ import (
 	"testing"
 	"time"
 
+	agentmetricspb "github.com/census-instrumentation/opencensus-proto/gen-go/agent/metrics/v1"
 	metricspb "github.com/census-instrumentation/opencensus-proto/gen-go/metrics/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/collector/consumer/consumerdata"
 	"go.opentelemetry.io/collector/testutil/metricstestutil"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func Test_sanitizeTagKey(t *testing.T) {
@@ -154,7 +155,7 @@ func Test_metricDataToPlaintext(t *testing.T) {
 	int64Val := int64(123)
 	expectedInt64ValStr := "123"
 	int64Pt := &metricspb.Point{
-		Timestamp: metricstestutil.Timestamp(tsUnix),
+		Timestamp: timestamppb.New(tsUnix),
 		Value:     &metricspb.Point_Int64Value{Int64Value: int64Val},
 	}
 
@@ -184,20 +185,26 @@ func Test_metricDataToPlaintext(t *testing.T) {
 
 	tests := []struct {
 		name                       string
-		metricsDataFn              func() consumerdata.MetricsData
+		metricsDataFn              func() []*agentmetricspb.ExportMetricsServiceRequest
 		wantLines                  []string
 		wantNumConvertedTimeseries int
 		wantNumDroppedTimeseries   int
 	}{
 		{
 			name: "no_dims",
-			metricsDataFn: func() consumerdata.MetricsData {
-				return consumerdata.MetricsData{
-					Metrics: []*metricspb.Metric{
-						metricstestutil.Gauge("gauge_double_no_dims", nil, metricstestutil.Timeseries(tsUnix, nil, doublePt)),
-						metricstestutil.GaugeInt("gauge_int_no_dims", nil, metricstestutil.Timeseries(tsUnix, nil, int64Pt)),
-						metricstestutil.Cumulative("cumulative_double_no_dims", nil, metricstestutil.Timeseries(tsUnix, nil, doublePt)),
-						metricstestutil.CumulativeInt("cumulative_int_no_dims", nil, metricstestutil.Timeseries(tsUnix, nil, int64Pt)),
+			metricsDataFn: func() []*agentmetricspb.ExportMetricsServiceRequest {
+				return []*agentmetricspb.ExportMetricsServiceRequest{
+					{
+						Metrics: []*metricspb.Metric{
+							metricstestutil.Gauge("gauge_double_no_dims", nil, metricstestutil.Timeseries(tsUnix, nil, doublePt)),
+							metricstestutil.GaugeInt("gauge_int_no_dims", nil, metricstestutil.Timeseries(tsUnix, nil, int64Pt)),
+						},
+					},
+					{
+						Metrics: []*metricspb.Metric{
+							metricstestutil.Cumulative("cumulative_double_no_dims", nil, metricstestutil.Timeseries(tsUnix, nil, doublePt)),
+							metricstestutil.CumulativeInt("cumulative_int_no_dims", nil, metricstestutil.Timeseries(tsUnix, nil, int64Pt)),
+						},
 					},
 				}
 			},
@@ -211,13 +218,15 @@ func Test_metricDataToPlaintext(t *testing.T) {
 		},
 		{
 			name: "with_dims",
-			metricsDataFn: func() consumerdata.MetricsData {
-				return consumerdata.MetricsData{
-					Metrics: []*metricspb.Metric{
-						metricstestutil.Gauge("gauge_double_with_dims", keys, metricstestutil.Timeseries(tsUnix, values, doublePt)),
-						metricstestutil.GaugeInt("gauge_int_with_dims", keys, metricstestutil.Timeseries(tsUnix, values, int64Pt)),
-						metricstestutil.Cumulative("cumulative_double_with_dims", keys, metricstestutil.Timeseries(tsUnix, values, doublePt)),
-						metricstestutil.CumulativeInt("cumulative_int_with_dims", keys, metricstestutil.Timeseries(tsUnix, values, int64Pt)),
+			metricsDataFn: func() []*agentmetricspb.ExportMetricsServiceRequest {
+				return []*agentmetricspb.ExportMetricsServiceRequest{
+					{
+						Metrics: []*metricspb.Metric{
+							metricstestutil.Gauge("gauge_double_with_dims", keys, metricstestutil.Timeseries(tsUnix, values, doublePt)),
+							metricstestutil.GaugeInt("gauge_int_with_dims", keys, metricstestutil.Timeseries(tsUnix, values, int64Pt)),
+							metricstestutil.Cumulative("cumulative_double_with_dims", keys, metricstestutil.Timeseries(tsUnix, values, doublePt)),
+							metricstestutil.CumulativeInt("cumulative_int_with_dims", keys, metricstestutil.Timeseries(tsUnix, values, int64Pt)),
+						},
 					},
 				}
 			},
@@ -231,10 +240,12 @@ func Test_metricDataToPlaintext(t *testing.T) {
 		},
 		{
 			name: "distributions",
-			metricsDataFn: func() consumerdata.MetricsData {
-				return consumerdata.MetricsData{
-					Metrics: []*metricspb.Metric{
-						metricstestutil.GaugeDist("distrib", keys, distributionTimeSeries),
+			metricsDataFn: func() []*agentmetricspb.ExportMetricsServiceRequest {
+				return []*agentmetricspb.ExportMetricsServiceRequest{
+					{
+						Metrics: []*metricspb.Metric{
+							metricstestutil.GaugeDist("distrib", keys, distributionTimeSeries),
+						},
 					},
 				}
 			},
@@ -248,10 +259,12 @@ func Test_metricDataToPlaintext(t *testing.T) {
 		},
 		{
 			name: "summary",
-			metricsDataFn: func() consumerdata.MetricsData {
-				return consumerdata.MetricsData{
-					Metrics: []*metricspb.Metric{
-						metricstestutil.Summary("summary", keys, summaryTimeSeries),
+			metricsDataFn: func() []*agentmetricspb.ExportMetricsServiceRequest {
+				return []*agentmetricspb.ExportMetricsServiceRequest{
+					{
+						Metrics: []*metricspb.Metric{
+							metricstestutil.Summary("summary", keys, summaryTimeSeries),
+						},
 					},
 				}
 			},
@@ -305,7 +318,7 @@ func expectedSummaryLines(
 ) []string {
 	lines := []string{
 		metricName + ".count" + tags + " " + formatInt64(count) + " " + timestampStr,
-		metricName + tags + " " + formatFloatForValue(float64(sum)) + " " + timestampStr,
+		metricName + tags + " " + formatFloatForValue(sum) + " " + timestampStr,
 	}
 
 	for _, p := range percentiles {

@@ -20,20 +20,22 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/config"
-	"go.opentelemetry.io/collector/config/configmodels"
+	"go.opentelemetry.io/collector/config/confighttp"
+	"go.opentelemetry.io/collector/config/configtest"
 	"go.opentelemetry.io/collector/config/configtls"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/common/splunk"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/splunk"
 )
 
 func TestLoadConfig(t *testing.T) {
-	factories, err := config.ExampleComponents()
+	factories, err := componenttest.NopFactories()
 	assert.Nil(t, err)
 
-	factory := &Factory{}
-	factories.Receivers[configmodels.Type(typeStr)] = factory
-	cfg, err := config.LoadConfigFile(
+	factory := NewFactory()
+	factories.Receivers[typeStr] = factory
+	cfg, err := configtest.LoadConfigFile(
 		t, path.Join(".", "testdata", "config.yaml"), factories,
 	)
 
@@ -42,33 +44,33 @@ func TestLoadConfig(t *testing.T) {
 
 	assert.Equal(t, len(cfg.Receivers), 3)
 
-	r0 := cfg.Receivers["signalfx"]
+	r0 := cfg.Receivers[config.NewID(typeStr)]
 	assert.Equal(t, r0, factory.CreateDefaultConfig())
 
-	r1 := cfg.Receivers["signalfx/allsettings"].(*Config)
+	r1 := cfg.Receivers[config.NewIDWithName(typeStr, "allsettings")].(*Config)
 	assert.Equal(t, r1,
 		&Config{
-			ReceiverSettings: configmodels.ReceiverSettings{
-				TypeVal: typeStr,
-				NameVal: "signalfx/allsettings",
+			ReceiverSettings: config.NewReceiverSettings(config.NewIDWithName(typeStr, "allsettings")),
+			HTTPServerSettings: confighttp.HTTPServerSettings{
+				Endpoint: "localhost:9943",
 			},
-			Endpoint: "localhost:9943",
 			AccessTokenPassthroughConfig: splunk.AccessTokenPassthroughConfig{
 				AccessTokenPassthrough: true,
 			},
 		})
 
-	r2 := cfg.Receivers["signalfx/tls"].(*Config)
+	r2 := cfg.Receivers[config.NewIDWithName(typeStr, "tls")].(*Config)
 	assert.Equal(t, r2,
 		&Config{
-			ReceiverSettings: configmodels.ReceiverSettings{
-				TypeVal: typeStr,
-				NameVal: "signalfx/tls",
-			},
-			Endpoint: ":9943",
-			TLSCredentials: &configtls.TLSSetting{
-				CertFile: "/test.crt",
-				KeyFile:  "/test.key",
+			ReceiverSettings: config.NewReceiverSettings(config.NewIDWithName(typeStr, "tls")),
+			HTTPServerSettings: confighttp.HTTPServerSettings{
+				Endpoint: ":9943",
+				TLSSetting: &configtls.TLSServerSetting{
+					TLSSetting: configtls.TLSSetting{
+						CertFile: "/test.crt",
+						KeyFile:  "/test.key",
+					},
+				},
 			},
 			AccessTokenPassthroughConfig: splunk.AccessTokenPassthroughConfig{
 				AccessTokenPassthrough: false,

@@ -19,6 +19,8 @@ import (
 	"fmt"
 
 	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/config/confighttp"
+	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/testbed/testbed"
 	"go.uber.org/zap"
 
@@ -41,13 +43,15 @@ func NewSFxMetricsDataReceiver(port int) *SFxMetricsDataReceiver {
 }
 
 // Start the receiver.
-func (sr *SFxMetricsDataReceiver) Start(tc *testbed.MockTraceConsumer, mc *testbed.MockMetricConsumer) error {
-	addr := fmt.Sprintf("localhost:%d", sr.Port)
+func (sr *SFxMetricsDataReceiver) Start(_ consumer.Traces, mc consumer.Metrics, _ consumer.Logs) error {
 	config := signalfxreceiver.Config{
-		Endpoint: addr,
+		HTTPServerSettings: confighttp.HTTPServerSettings{
+			Endpoint: fmt.Sprintf("localhost:%d", sr.Port),
+		},
 	}
 	var err error
-	sr.receiver, err = signalfxreceiver.New(zap.L(), config, mc)
+	f := signalfxreceiver.NewFactory()
+	sr.receiver, err = f.CreateMetricsReceiver(context.Background(), component.ReceiverCreateParams{Logger: zap.L()}, &config, mc)
 	if err != nil {
 		return err
 	}

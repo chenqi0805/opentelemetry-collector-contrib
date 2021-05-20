@@ -18,10 +18,11 @@ import (
 	"context"
 
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config/configmodels"
+	"go.opentelemetry.io/collector/config"
 	"go.opentelemetry.io/collector/consumer"
+	"go.opentelemetry.io/collector/processor/processorhelper"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/common/k8sconfig"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/k8sconfig"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/processor/k8sprocessor/kube"
 )
 
@@ -30,51 +31,144 @@ const (
 	typeStr = "k8s_tagger"
 )
 
-// Factory is the factory for Attributes processor.
-type Factory struct {
-	// Factory dependencies that can be provided form outside.
-	KubeClient kube.ClientProvider
+var kubeClientProvider = kube.ClientProvider(nil)
+var consumerCapabilities = consumer.Capabilities{MutatesData: true}
+
+// NewFactory returns a new factory for the k8s processor.
+func NewFactory() component.ProcessorFactory {
+	return processorhelper.NewFactory(
+		typeStr,
+		createDefaultConfig,
+		processorhelper.WithTraces(createTracesProcessor),
+		processorhelper.WithMetrics(createMetricsProcessor),
+		processorhelper.WithLogs(createLogsProcessor),
+	)
 }
 
-// Type gets the type of the config created by this factory.
-func (f *Factory) Type() configmodels.Type {
-	return configmodels.Type(typeStr)
-}
-
-// CreateDefaultConfig creates the default configuration for processor.
-func (f *Factory) CreateDefaultConfig() configmodels.Processor {
+func createDefaultConfig() config.Processor {
 	return &Config{
-		ProcessorSettings: configmodels.ProcessorSettings{
-			TypeVal: configmodels.Type(typeStr),
-			NameVal: typeStr,
-		},
-		APIConfig: k8sconfig.APIConfig{AuthType: k8sconfig.AuthTypeServiceAccount},
+		ProcessorSettings: config.NewProcessorSettings(config.NewID(typeStr)),
+		APIConfig:         k8sconfig.APIConfig{AuthType: k8sconfig.AuthTypeServiceAccount},
 	}
 }
 
-// CreateTraceProcessor creates a trace processor based on this config.
-func (f *Factory) CreateTraceProcessor(
+func createTracesProcessor(
 	ctx context.Context,
 	params component.ProcessorCreateParams,
-	nextTraceConsumer consumer.TraceConsumer,
-	cfg configmodels.Processor,
-) (component.TraceProcessor, error) {
-	opts := createProcessorOpts(cfg)
-	return NewTraceProcessor(params.Logger, nextTraceConsumer, f.KubeClient, opts...)
+	cfg config.Processor,
+	next consumer.Traces,
+) (component.TracesProcessor, error) {
+	return createTracesProcessorWithOptions(ctx, params, cfg, next)
 }
 
-// CreateMetricsProcessor creates a metrics processor based on this config.
-func (f *Factory) CreateMetricsProcessor(
+func createLogsProcessor(
 	ctx context.Context,
 	params component.ProcessorCreateParams,
-	nextMetricsConsumer consumer.MetricsConsumer,
-	cfg configmodels.Processor,
+	cfg config.Processor,
+	nextLogsConsumer consumer.Logs,
+) (component.LogsProcessor, error) {
+	return createLogsProcessorWithOptions(ctx, params, cfg, nextLogsConsumer)
+}
+
+func createMetricsProcessor(
+	ctx context.Context,
+	params component.ProcessorCreateParams,
+	cfg config.Processor,
+	nextMetricsConsumer consumer.Metrics,
 ) (component.MetricsProcessor, error) {
-	opts := createProcessorOpts(cfg)
-	return NewMetricsProcessor(params.Logger, nextMetricsConsumer, f.KubeClient, opts...)
+	return createMetricsProcessorWithOptions(ctx, params, cfg, nextMetricsConsumer)
 }
 
-func createProcessorOpts(cfg configmodels.Processor) []Option {
+func createTracesProcessorWithOptions(
+	_ context.Context,
+	params component.ProcessorCreateParams,
+	cfg config.Processor,
+	next consumer.Traces,
+	options ...Option,
+) (component.TracesProcessor, error) {
+	kp, err := createKubernetesProcessor(params, cfg, options...)
+	if err != nil {
+		return nil, err
+	}
+
+	return processorhelper.NewTracesProcessor(
+		cfg,
+		next,
+		kp,
+		processorhelper.WithCapabilities(consumerCapabilities),
+		processorhelper.WithStart(kp.Start),
+		processorhelper.WithShutdown(kp.Shutdown))
+}
+
+func createMetricsProcessorWithOptions(
+	_ context.Context,
+	params component.ProcessorCreateParams,
+	cfg config.Processor,
+	nextMetricsConsumer consumer.Metrics,
+	options ...Option,
+) (component.MetricsProcessor, error) {
+	kp, err := createKubernetesProcessor(params, cfg, options...)
+	if err != nil {
+		return nil, err
+	}
+
+	return processorhelper.NewMetricsProcessor(
+		cfg,
+		nextMetricsConsumer,
+		kp,
+		processorhelper.WithCapabilities(consumerCapabilities),
+		processorhelper.WithStart(kp.Start),
+		processorhelper.WithShutdown(kp.Shutdown))
+}
+
+func createLogsProcessorWithOptions(
+	_ context.Context,
+	params component.ProcessorCreateParams,
+	cfg config.Processor,
+	nextLogsConsumer consumer.Logs,
+	options ...Option,
+) (component.LogsProcessor, error) {
+	kp, err := createKubernetesProcessor(params, cfg, options...)
+	if err != nil {
+		return nil, err
+	}
+
+	return processorhelper.NewLogsProcessor(
+		cfg,
+		nextLogsConsumer,
+		kp,
+		processorhelper.WithCapabilities(consumerCapabilities),
+		processorhelper.WithStart(kp.Start),
+		processorhelper.WithShutdown(kp.Shutdown))
+}
+
+func createKubernetesProcessor(
+	params component.ProcessorCreateParams,
+	cfg config.Processor,
+	options ...Option,
+) (*kubernetesprocessor, error) {
+	kp := &kubernetesprocessor{logger: params.Logger}
+
+	allOptions := append(createProcessorOpts(cfg), options...)
+
+	for _, opt := range allOptions {
+		if err := opt(kp); err != nil {
+			return nil, err
+		}
+	}
+
+	// This might have been set by an option already
+	if kp.kc == nil {
+		err := kp.initKubeClient(kp.logger, kubeClientProvider)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return kp, nil
+}
+
+func createProcessorOpts(cfg config.Processor) []Option {
 	oCfg := cfg.(*Config)
 	opts := []Option{}
 	if oCfg.Passthrough {
@@ -92,6 +186,8 @@ func createProcessorOpts(cfg configmodels.Processor) []Option {
 	opts = append(opts, WithFilterLabels(oCfg.Filter.Labels...))
 	opts = append(opts, WithFilterFields(oCfg.Filter.Fields...))
 	opts = append(opts, WithAPIConfig(oCfg.APIConfig))
+
+	opts = append(opts, WithExtractPodAssociations(oCfg.Association...))
 
 	return opts
 }

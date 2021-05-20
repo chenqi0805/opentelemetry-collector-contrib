@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log"
 
+	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/service"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/version"
@@ -32,14 +33,13 @@ func main() {
 		log.Fatalf("failed to build components: %v", err)
 	}
 
-	info := service.ApplicationStartInfo{
-		ExeName:  "otelcontribcol",
-		LongName: "OpenTelemetry Contrib Collector",
-		Version:  version.Version,
-		GitHash:  version.GitHash,
+	info := component.BuildInfo{
+		Command:     "otelcontribcol",
+		Description: "OpenTelemetry Collector Contrib",
+		Version:     version.Version,
 	}
 
-	if err := run(service.Parameters{ApplicationStartInfo: info, Factories: factories}); err != nil {
+	if err := run(service.Parameters{BuildInfo: info, Factories: factories}); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -50,7 +50,7 @@ func runInteractive(params service.Parameters) error {
 		return fmt.Errorf("failed to construct the application: %w", err)
 	}
 
-	err = app.Start()
+	err = app.Run()
 	if err != nil {
 		return fmt.Errorf("application run finished with error: %w", err)
 	}

@@ -18,19 +18,19 @@ import (
 	"context"
 
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config/configmodels"
+	"go.opentelemetry.io/collector/config"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/common/k8sconfig"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/k8sconfig"
 )
 
 const (
 	// The value of extension "type" in configuration.
-	typeStr configmodels.Type = "k8s_observer"
+	typeStr config.Type = "k8s_observer"
 )
 
 // Factory is the factory for the extension.
@@ -43,18 +43,15 @@ type Factory struct {
 var _ component.Factory = (*Factory)(nil)
 
 // Type gets the type of the config created by this factory.
-func (f *Factory) Type() configmodels.Type {
+func (f *Factory) Type() config.Type {
 	return typeStr
 }
 
 // CreateDefaultConfig creates the default configuration for the extension.
-func (f *Factory) CreateDefaultConfig() configmodels.Extension {
+func (f *Factory) CreateDefaultConfig() config.Extension {
 	return &Config{
-		ExtensionSettings: configmodels.ExtensionSettings{
-			TypeVal: typeStr,
-			NameVal: string(typeStr),
-		},
-		APIConfig: k8sconfig.APIConfig{AuthType: k8sconfig.AuthTypeServiceAccount},
+		ExtensionSettings: config.NewExtensionSettings(config.NewID(typeStr)),
+		APIConfig:         k8sconfig.APIConfig{AuthType: k8sconfig.AuthTypeServiceAccount},
 	}
 }
 
@@ -62,8 +59,8 @@ func (f *Factory) CreateDefaultConfig() configmodels.Extension {
 func (f *Factory) CreateExtension(
 	ctx context.Context,
 	params component.ExtensionCreateParams,
-	cfg configmodels.Extension,
-) (component.ServiceExtension, error) {
+	cfg config.Extension,
+) (component.Extension, error) {
 	config := cfg.(*Config)
 
 	clientset, err := f.createK8sClientset(config.APIConfig)

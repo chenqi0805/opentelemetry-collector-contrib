@@ -15,51 +15,111 @@
 package newrelicexporter
 
 import (
+	"context"
+	"fmt"
 	"time"
 
+	"github.com/newrelic/newrelic-telemetry-sdk-go/telemetry"
+	"go.opencensus.io/stats/view"
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config/configmodels"
+	"go.opentelemetry.io/collector/config"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
 	"go.uber.org/zap"
 )
 
 const typeStr = "newrelic"
 
-// Factory is the factory for the New Relic exporter.
-type Factory struct{}
+// NewFactory creates a factory for New Relic exporter.
+func NewFactory() component.ExporterFactory {
+	view.Register(MetricViews()...)
 
-// Type gets the type of the exporter configuration created by this factory.
-func (f *Factory) Type() configmodels.Type {
-	return configmodels.Type(typeStr)
+	return exporterhelper.NewFactory(
+		typeStr,
+		createDefaultConfig,
+		exporterhelper.WithTraces(createTracesExporter),
+		exporterhelper.WithMetrics(createMetricsExporter),
+		exporterhelper.WithLogs(createLogsExporter),
+	)
 }
 
-// CreateDefaultConfig creates a default configuration for this exporter.
-func (f *Factory) CreateDefaultConfig() configmodels.Exporter {
+func createDefaultConfig() config.Exporter {
 	return &Config{
-		ExporterSettings: configmodels.ExporterSettings{
-			TypeVal: configmodels.Type(typeStr),
-			NameVal: typeStr,
+		ExporterSettings: config.NewExporterSettings(config.NewID(typeStr)),
+
+		CommonConfig: EndpointConfig{
+			Timeout: time.Second * 15,
 		},
-		Timeout: time.Second * 15,
 	}
 }
 
-// CreateTraceExporter creates a New Relic trace exporter for this configuration.
-func (f *Factory) CreateTraceExporter(logger *zap.Logger, cfg configmodels.Exporter) (component.TraceExporterOld, error) {
-	exp, err := newExporter(logger, cfg)
+// CreateTracesExporter creates a New Relic trace exporter for this configuration.
+func createTracesExporter(
+	_ context.Context,
+	params component.ExporterCreateParams,
+	cfg config.Exporter,
+) (component.TracesExporter, error) {
+	nrConfig, ok := cfg.(*Config)
+	if !ok {
+		return nil, fmt.Errorf("invalid config: %#v", cfg)
+	}
+	traceConfig := nrConfig.GetTracesConfig()
+	exp, err := newExporter(params.Logger, &params.BuildInfo, traceConfig, telemetry.NewSpanRequestFactory)
 	if err != nil {
 		return nil, err
 	}
 
-	return exporterhelper.NewTraceExporterOld(cfg, exp.pushTraceData, exporterhelper.WithShutdown(exp.Shutdown))
+	// The logger is only used in a disabled queuedRetrySender, which noisily logs at
+	// the error level when it is disabled and errors occur.
+	return exporterhelper.NewTracesExporter(cfg, zap.NewNop(), exp.pushTraceData,
+		exporterhelper.WithTimeout(exporterhelper.TimeoutSettings{Timeout: traceConfig.Timeout}),
+		exporterhelper.WithRetry(exporterhelper.RetrySettings{Enabled: false}),
+		exporterhelper.WithQueue(exporterhelper.QueueSettings{Enabled: false}),
+	)
 }
 
 // CreateMetricsExporter creates a New Relic metrics exporter for this configuration.
-func (f *Factory) CreateMetricsExporter(logger *zap.Logger, cfg configmodels.Exporter) (component.MetricsExporterOld, error) {
-	exp, err := newExporter(logger, cfg)
+func createMetricsExporter(
+	_ context.Context,
+	params component.ExporterCreateParams,
+	cfg config.Exporter,
+) (component.MetricsExporter, error) {
+	nrConfig, ok := cfg.(*Config)
+	if !ok {
+		return nil, fmt.Errorf("invalid config: %#v", cfg)
+	}
+
+	metricsConfig := nrConfig.GetMetricsConfig()
+	exp, err := newExporter(params.Logger, &params.BuildInfo, metricsConfig, telemetry.NewMetricRequestFactory)
 	if err != nil {
 		return nil, err
 	}
 
-	return exporterhelper.NewMetricsExporterOld(cfg, exp.pushMetricData, exporterhelper.WithShutdown(exp.Shutdown))
+	return exporterhelper.NewMetricsExporter(cfg, zap.NewNop(), exp.pushMetricData,
+		exporterhelper.WithTimeout(exporterhelper.TimeoutSettings{Timeout: metricsConfig.Timeout}),
+		exporterhelper.WithRetry(exporterhelper.RetrySettings{Enabled: false}),
+		exporterhelper.WithQueue(exporterhelper.QueueSettings{Enabled: false}),
+	)
+}
+
+// CreateLogsExporter creates a New Relic logs exporter for this configuration.
+func createLogsExporter(
+	_ context.Context,
+	params component.ExporterCreateParams,
+	cfg config.Exporter,
+) (component.LogsExporter, error) {
+	nrConfig, ok := cfg.(*Config)
+	if !ok {
+		return nil, fmt.Errorf("invalid config: %#v", cfg)
+	}
+
+	logsConfig := nrConfig.GetLogsConfig()
+	exp, err := newExporter(params.Logger, &params.BuildInfo, logsConfig, telemetry.NewLogRequestFactory)
+	if err != nil {
+		return nil, err
+	}
+	return exporterhelper.NewLogsExporter(cfg, zap.NewNop(), exp.pushLogData,
+		exporterhelper.WithTimeout(exporterhelper.TimeoutSettings{Timeout: logsConfig.Timeout}),
+		exporterhelper.WithRetry(exporterhelper.RetrySettings{Enabled: false}),
+		exporterhelper.WithQueue(exporterhelper.QueueSettings{Enabled: false}),
+	)
 }

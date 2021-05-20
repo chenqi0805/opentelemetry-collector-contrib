@@ -16,10 +16,14 @@ package collection
 
 import (
 	"sync"
+	"time"
 
+	agentmetricspb "github.com/census-instrumentation/opencensus-proto/gen-go/agent/metrics/v1"
 	metricspb "github.com/census-instrumentation/opencensus-proto/gen-go/metrics/v1"
 	resourcepb "github.com/census-instrumentation/opencensus-proto/gen-go/resource/v1"
-	"go.opentelemetry.io/collector/consumer/consumerdata"
+	"go.opentelemetry.io/collector/consumer/pdata"
+	"go.opentelemetry.io/collector/translator/internaldata"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -32,7 +36,7 @@ import (
 // until the next Kubernetes event pertaining to an object.
 type metricsStore struct {
 	sync.RWMutex
-	metricsCache map[types.UID][]consumerdata.MetricsData
+	metricsCache map[types.UID][]*agentmetricspb.ExportMetricsServiceRequest
 }
 
 // This probably wouldn't be required once the new OTLP ResourceMetrics
@@ -52,8 +56,10 @@ func (ms *metricsStore) update(obj runtime.Object, rms []*resourceMetrics) error
 		return err
 	}
 
-	mds := make([]consumerdata.MetricsData, len(rms))
+	origMds := make([]agentmetricspb.ExportMetricsServiceRequest, len(rms))
+	mds := make([]*agentmetricspb.ExportMetricsServiceRequest, len(rms))
 	for i, rm := range rms {
+		mds[i] = &origMds[i]
 		mds[i].Resource = rm.resource
 		mds[i].Metrics = rm.metrics
 	}
@@ -77,15 +83,30 @@ func (ms *metricsStore) remove(obj runtime.Object) error {
 }
 
 // getMetricData returns metricsCache stored in the cache at a given point in time.
-func (ms *metricsStore) getMetricData() []consumerdata.MetricsData {
+func (ms *metricsStore) getMetricData(currentTime time.Time) pdata.Metrics {
 	ms.RLock()
 	defer ms.RUnlock()
 
-	var out []consumerdata.MetricsData
-
+	out := pdata.NewMetrics()
 	for _, mds := range ms.metricsCache {
-		out = append(out, mds...)
+		for i := range mds {
+			// Set datapoint timestamp to be time of retrieval from cache.
+			applyCurrentTime(mds[i].Metrics, currentTime)
+			internaldata.OCToMetrics(mds[i].Node, mds[i].Resource, mds[i].Metrics).ResourceMetrics().MoveAndAppendTo(out.ResourceMetrics())
+		}
 	}
 
 	return out
+}
+
+func applyCurrentTime(metrics []*metricspb.Metric, t time.Time) []*metricspb.Metric {
+	currentTime := timestamppb.New(t)
+	for _, metric := range metrics {
+		if metric != nil {
+			for i := range metric.Timeseries {
+				metric.Timeseries[i].Points[0].Timestamp = currentTime
+			}
+		}
+	}
+	return metrics
 }

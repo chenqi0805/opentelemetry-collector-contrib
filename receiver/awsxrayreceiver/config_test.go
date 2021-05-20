@@ -1,4 +1,4 @@
-// Copyright 2019, OpenTelemetry Authors
+// Copyright The OpenTelemetry Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,22 +18,25 @@ import (
 	"path"
 	"testing"
 
-	"github.com/aws/aws-sdk-go/aws"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/config"
-	"go.opentelemetry.io/collector/config/configmodels"
 	"go.opentelemetry.io/collector/config/confignet"
+	"go.opentelemetry.io/collector/config/configtest"
 	"go.opentelemetry.io/collector/config/configtls"
+
+	awsxray "github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/xray"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awsxrayreceiver/internal/proxy"
 )
 
 func TestLoadConfig(t *testing.T) {
-	factories, err := config.ExampleComponents()
+	factories, err := componenttest.NopFactories()
 	assert.Nil(t, err)
 
-	factory := &Factory{}
-	factories.Receivers[configmodels.Type(typeStr)] = factory
-	cfg, err := config.LoadConfigFile(
+	factory := NewFactory()
+	factories.Receivers[awsxray.TypeStr] = factory
+	cfg, err := configtest.LoadConfigFile(
 		t, path.Join(".", "testdata", "config.yaml"), factories,
 	)
 
@@ -44,22 +47,22 @@ func TestLoadConfig(t *testing.T) {
 
 	// ensure default configurations are generated when users provide
 	// nothing.
-	r0 := cfg.Receivers[typeStr]
+	r0 := cfg.Receivers[config.NewID(awsxray.TypeStr)]
 	assert.Equal(t, factory.CreateDefaultConfig(), r0)
 
 	// ensure the UDP endpoint can be properly overwritten
-	r1 := cfg.Receivers[typeStr+"/udp_endpoint"].(*Config)
+	r1 := cfg.Receivers[config.NewIDWithName(awsxray.TypeStr, "udp_endpoint")].(*Config)
 	assert.Equal(t,
 		&Config{
-			ReceiverSettings: configmodels.ReceiverSettings{
-				TypeVal: configmodels.Type(typeStr),
-				NameVal: typeStr + "/udp_endpoint",
+			ReceiverSettings: config.NewReceiverSettings(config.NewIDWithName(awsxray.TypeStr, "udp_endpoint")),
+			NetAddr: confignet.NetAddr{
+				Endpoint:  "0.0.0.0:5678",
+				Transport: "udp",
 			},
-			TCPAddr: confignet.TCPAddr{
-				Endpoint: "localhost:5678",
-			},
-			ProxyServer: &proxyServer{
-				TCPEndpoint:  "0.0.0.0:2000",
+			ProxyServer: &proxy.Config{
+				TCPAddr: confignet.TCPAddr{
+					Endpoint: "0.0.0.0:2000",
+				},
 				ProxyAddress: "",
 				TLSSetting: configtls.TLSClientSetting{
 					Insecure:   false,
@@ -68,24 +71,23 @@ func TestLoadConfig(t *testing.T) {
 				Region:      "",
 				RoleARN:     "",
 				AWSEndpoint: "",
-				LocalMode:   aws.Bool(false),
 			},
 		},
 		r1)
 
 	// ensure the fields under proxy_server are properly overwritten
-	r2 := cfg.Receivers[typeStr+"/proxy_server"].(*Config)
+	r2 := cfg.Receivers[config.NewIDWithName(awsxray.TypeStr, "proxy_server")].(*Config)
 	assert.Equal(t,
 		&Config{
-			ReceiverSettings: configmodels.ReceiverSettings{
-				TypeVal: configmodels.Type(typeStr),
-				NameVal: typeStr + "/proxy_server",
+			ReceiverSettings: config.NewReceiverSettings(config.NewIDWithName(awsxray.TypeStr, "proxy_server")),
+			NetAddr: confignet.NetAddr{
+				Endpoint:  "0.0.0.0:2000",
+				Transport: "udp",
 			},
-			TCPAddr: confignet.TCPAddr{
-				Endpoint: "0.0.0.0:2000",
-			},
-			ProxyServer: &proxyServer{
-				TCPEndpoint:  "localhost:1234",
+			ProxyServer: &proxy.Config{
+				TCPAddr: confignet.TCPAddr{
+					Endpoint: "0.0.0.0:1234",
+				},
 				ProxyAddress: "https://proxy.proxy.com",
 				TLSSetting: configtls.TLSClientSetting{
 					Insecure:   true,
@@ -94,7 +96,7 @@ func TestLoadConfig(t *testing.T) {
 				Region:      "us-west-1",
 				RoleARN:     "arn:aws:iam::123456789012:role/awesome_role",
 				AWSEndpoint: "https://another.aws.endpoint.com",
-				LocalMode:   aws.Bool(true),
+				LocalMode:   true,
 			},
 		},
 		r2)

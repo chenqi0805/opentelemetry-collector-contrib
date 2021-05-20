@@ -19,31 +19,37 @@ import (
 	"time"
 
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config/configerror"
-	"go.opentelemetry.io/collector/config/configmodels"
+	"go.opentelemetry.io/collector/config"
 	"go.opentelemetry.io/collector/consumer"
+	"go.opentelemetry.io/collector/receiver/receiverhelper"
 	"go.uber.org/zap"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/common/k8sconfig"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/k8sconfig"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/kubeletstatsreceiver/kubelet"
 )
 
-const typeStr = "kubeletstats"
+const (
+	typeStr            = "kubeletstats"
+	metricGroupsConfig = "metric_groups"
+)
 
-var _ component.ReceiverFactoryBase = (*Factory)(nil)
-
-type Factory struct {
+var defaultMetricGroups = []kubelet.MetricGroup{
+	kubelet.ContainerMetricGroup,
+	kubelet.PodMetricGroup,
+	kubelet.NodeMetricGroup,
 }
 
-func (f *Factory) Type() configmodels.Type {
-	return typeStr
+// NewFactory creates a factory for kubeletstats receiver.
+func NewFactory() component.ReceiverFactory {
+	return receiverhelper.NewFactory(
+		typeStr,
+		createDefaultConfig,
+		receiverhelper.WithMetrics(createMetricsReceiver))
 }
 
-func (f *Factory) CreateDefaultConfig() configmodels.Receiver {
+func createDefaultConfig() config.Receiver {
 	return &Config{
-		ReceiverSettings: configmodels.ReceiverSettings{
-			TypeVal: typeStr,
-		},
+		ReceiverSettings: config.NewReceiverSettings(config.NewID(typeStr)),
 		ClientConfig: kubelet.ClientConfig{
 			APIConfig: k8sconfig.APIConfig{
 				AuthType: k8sconfig.AuthTypeTLS,
@@ -53,39 +59,26 @@ func (f *Factory) CreateDefaultConfig() configmodels.Receiver {
 	}
 }
 
-func (f *Factory) CustomUnmarshaler() component.CustomUnmarshaler {
-	return nil
-}
-
-func (f *Factory) CreateTraceReceiver(
-	context.Context,
-	*zap.Logger,
-	configmodels.Receiver,
-	consumer.TraceConsumerOld,
-) (component.TraceReceiver, error) {
-	return nil, configerror.ErrDataTypeIsNotSupported
-}
-
-func (f *Factory) CreateMetricsReceiver(
+func createMetricsReceiver(
 	ctx context.Context,
-	logger *zap.Logger,
-	cfg configmodels.Receiver,
-	consumer consumer.MetricsConsumerOld,
+	params component.ReceiverCreateParams,
+	baseCfg config.Receiver,
+	consumer consumer.Metrics,
 ) (component.MetricsReceiver, error) {
-	rest, err := f.restClient(logger, cfg)
+	cfg := baseCfg.(*Config)
+	rOptions, err := cfg.getReceiverOptions()
 	if err != nil {
 		return nil, err
 	}
-	return &receiver{
-		logger:   logger,
-		cfg:      cfg,
-		consumer: consumer,
-		rest:     rest,
-	}, nil
+	rest, err := restClient(params.Logger, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return newReceiver(rOptions, params.Logger, rest, consumer), nil
 }
 
-func (f *Factory) restClient(logger *zap.Logger, baseCfg configmodels.Receiver) (kubelet.RestClient, error) {
-	cfg := baseCfg.(*Config)
+func restClient(logger *zap.Logger, cfg *Config) (kubelet.RestClient, error) {
 	clientProvider, err := kubelet.NewClientProvider(cfg.Endpoint, &cfg.ClientConfig, logger)
 	if err != nil {
 		return nil, err

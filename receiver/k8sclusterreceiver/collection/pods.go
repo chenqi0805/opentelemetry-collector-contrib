@@ -15,19 +15,24 @@
 package collection
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
 	metricspb "github.com/census-instrumentation/opencensus-proto/gen-go/metrics/v1"
 	resourcepb "github.com/census-instrumentation/opencensus-proto/gen-go/resource/v1"
 	"go.opentelemetry.io/collector/translator/conventions"
+	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/cache"
 
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/common/testing/util"
+	metadataPkg "github.com/open-telemetry/opentelemetry-collector-contrib/pkg/experimentalmetricmetadata"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/k8sclusterreceiver/utils"
 )
 
@@ -37,7 +42,7 @@ const (
 )
 
 var podPhaseMetric = &metricspb.MetricDescriptor{
-	Name:        "k8s/pod/phase",
+	Name:        "k8s.pod.phase",
 	Description: "Current phase of the pod (1 - Pending, 2 - Running, 3 - Succeeded, 4 - Failed, 5 - Unknown)",
 	Type:        metricspb.MetricDescriptor_GAUGE_INT64,
 }
@@ -109,9 +114,9 @@ func getResourceForPod(pod *corev1.Pod) *resourcepb.Resource {
 	return &resourcepb.Resource{
 		Type: k8sType,
 		Labels: map[string]string{
-			k8sKeyPodUID:                      string(pod.UID),
+			conventions.AttributeK8sPodUID:    string(pod.UID),
 			conventions.AttributeK8sPod:       pod.Name,
-			k8sKeyNodeName:                    pod.Spec.NodeName,
+			conventions.AttributeK8sNodeName:  pod.Spec.NodeName,
 			conventions.AttributeK8sNamespace: pod.Namespace,
 			conventions.AttributeK8sCluster:   pod.ClusterName,
 		},
@@ -136,14 +141,15 @@ func phaseToInt(phase corev1.PodPhase) int32 {
 }
 
 // getMetadataForPod returns all metadata associated with the pod.
-func getMetadataForPod(pod *corev1.Pod, mc *metadataStore) map[ResourceID]*KubernetesMetadata {
-	metadata := utils.MergeStringMaps(map[string]string{}, pod.Labels)
+func getMetadataForPod(pod *corev1.Pod, mc *metadataStore, logger *zap.Logger) map[metadataPkg.ResourceID]*KubernetesMetadata {
+	metadata := util.MergeStringMaps(map[string]string{}, pod.Labels)
 
 	metadata[podCreationTime] = pod.CreationTimestamp.Format(time.RFC3339)
 
 	for _, or := range pod.OwnerReferences {
-		metadata[strings.ToLower(or.Kind)] = or.Name
-		metadata[strings.ToLower(or.Kind)+"_uid"] = string(or.UID)
+		kind := strings.ToLower(or.Kind)
+		metadata[getOTelNameFromKind(kind)] = or.Name
+		metadata[getOTelUIDFromKind(kind)] = string(or.UID)
 
 		// defer syncing replicaset and job workload metadata.
 		if or.Kind == k8sKindReplicaSet || or.Kind == k8sKindJob {
@@ -154,27 +160,27 @@ func getMetadataForPod(pod *corev1.Pod, mc *metadataStore) map[ResourceID]*Kuber
 	}
 
 	if mc.services != nil {
-		metadata = utils.MergeStringMaps(metadata,
+		metadata = util.MergeStringMaps(metadata,
 			getPodServiceTags(pod, mc.services),
 		)
 	}
 
 	if mc.jobs != nil {
-		metadata = utils.MergeStringMaps(metadata,
-			collectPodJobProperties(pod, mc.jobs),
+		metadata = util.MergeStringMaps(metadata,
+			collectPodJobProperties(pod, mc.jobs, logger),
 		)
 	}
 
 	if mc.replicaSets != nil {
-		metadata = utils.MergeStringMaps(metadata,
-			collectPodReplicaSetProperties(pod, mc.replicaSets),
+		metadata = util.MergeStringMaps(metadata,
+			collectPodReplicaSetProperties(pod, mc.replicaSets, logger),
 		)
 	}
 
-	podID := ResourceID(pod.UID)
-	return mergeKubernetesMetadataMaps(map[ResourceID]*KubernetesMetadata{
+	podID := metadataPkg.ResourceID(pod.UID)
+	return mergeKubernetesMetadataMaps(map[metadataPkg.ResourceID]*KubernetesMetadata{
 		podID: {
-			resourceIDKey: k8sKeyPodUID,
+			resourceIDKey: conventions.AttributeK8sPodUID,
 			resourceID:    podID,
 			metadata:      metadata,
 		},
@@ -183,50 +189,65 @@ func getMetadataForPod(pod *corev1.Pod, mc *metadataStore) map[ResourceID]*Kuber
 
 // collectPodJobProperties checks if pod owner of type Job is cached. Check owners reference
 // on Job to see if it was created by a CronJob. Sync metadata accordingly.
-func collectPodJobProperties(pod *corev1.Pod, JobStore cache.Store) map[string]string {
-	properties := map[string]string{}
-
+func collectPodJobProperties(pod *corev1.Pod, JobStore cache.Store, logger *zap.Logger) map[string]string {
 	jobRef := utils.FindOwnerWithKind(pod.OwnerReferences, k8sKindJob)
 	if jobRef != nil {
-		job, ok, _ := JobStore.GetByKey(utils.GetIDForCache(pod.Namespace, jobRef.Name))
-		if ok {
-			jobObj := job.(*batchv1.Job)
-			if cronJobRef := utils.FindOwnerWithKind(jobObj.OwnerReferences, k8sKindCronJob); cronJobRef != nil {
-				properties = utils.MergeStringMaps(getPodCronJobProperties(cronJobRef), properties)
-			} else {
-				properties = utils.MergeStringMaps(
-					getPodWorkloadProperties(jobObj.Name, k8sKindJob),
-					properties,
-				)
-			}
+		job, exists, err := JobStore.GetByKey(utils.GetIDForCache(pod.Namespace, jobRef.Name))
+		if err != nil {
+			logError(err, jobRef, pod.UID, logger)
+			return nil
+		} else if !exists {
+			logWarning(jobRef, pod.UID, logger)
+			return nil
 		}
-	}
 
-	return properties
+		jobObj := job.(*batchv1.Job)
+		if cronJobRef := utils.FindOwnerWithKind(jobObj.OwnerReferences, k8sKindCronJob); cronJobRef != nil {
+			return getWorkloadProperties(cronJobRef, conventions.AttributeK8sCronJob)
+		}
+		return getWorkloadProperties(jobRef, conventions.AttributeK8sJob)
+	}
+	return nil
 }
 
 // collectPodReplicaSetProperties checks if pod owner of type ReplicaSet is cached. Check owners reference
 // on ReplicaSet to see if it was created by a Deployment. Sync metadata accordingly.
-func collectPodReplicaSetProperties(pod *corev1.Pod, replicaSetstore cache.Store) map[string]string {
-	properties := map[string]string{}
-
+func collectPodReplicaSetProperties(pod *corev1.Pod, replicaSetstore cache.Store, logger *zap.Logger) map[string]string {
 	rsRef := utils.FindOwnerWithKind(pod.OwnerReferences, k8sKindReplicaSet)
 	if rsRef != nil {
-		replicaSet, ok, _ := replicaSetstore.GetByKey(utils.GetIDForCache(pod.Namespace, rsRef.Name))
-		if ok {
-			replicaSetObj := replicaSet.(*appsv1.ReplicaSet)
-			if deployRef := utils.FindOwnerWithKind(replicaSetObj.OwnerReferences, k8sKindDeployment); deployRef != nil {
-				properties = utils.MergeStringMaps(getPodDeploymentProperties(rsRef), properties)
-
-			} else {
-				properties = utils.MergeStringMaps(
-					getPodWorkloadProperties(replicaSetObj.Name, k8sKindReplicaSet),
-					properties,
-				)
-			}
+		replicaSet, exists, err := replicaSetstore.GetByKey(utils.GetIDForCache(pod.Namespace, rsRef.Name))
+		if err != nil {
+			logError(err, rsRef, pod.UID, logger)
+			return nil
+		} else if !exists {
+			logWarning(rsRef, pod.UID, logger)
+			return nil
 		}
+
+		replicaSetObj := replicaSet.(*appsv1.ReplicaSet)
+		if deployRef := utils.FindOwnerWithKind(replicaSetObj.OwnerReferences, k8sKindDeployment); deployRef != nil {
+			return getWorkloadProperties(deployRef, conventions.AttributeK8sDeployment)
+		}
+		return getWorkloadProperties(rsRef, conventions.AttributeK8sReplicaSet)
 	}
-	return properties
+	return nil
+}
+
+func logWarning(ref *v1.OwnerReference, podUID types.UID, logger *zap.Logger) {
+	logger.Warn(
+		"Resource does not exist in store, properties from it will not be synced.",
+		zap.String(conventions.AttributeK8sPodUID, string(podUID)),
+		zap.String(conventions.AttributeK8sJobUID, string(ref.UID)),
+	)
+}
+
+func logError(err error, ref *v1.OwnerReference, podUID types.UID, logger *zap.Logger) {
+	logger.Error(
+		"Failed to get resource from store, properties from it will not be synced.",
+		zap.String(conventions.AttributeK8sPodUID, string(podUID)),
+		zap.String(conventions.AttributeK8sJobUID, string(ref.UID)),
+		zap.Error(err),
+	)
 }
 
 // getPodServiceTags returns a set of services associated with the pod.
@@ -237,45 +258,26 @@ func getPodServiceTags(pod *corev1.Pod, services cache.Store) map[string]string 
 		serObj := ser.(*corev1.Service)
 		if serObj.Namespace == pod.Namespace &&
 			labels.Set(serObj.Spec.Selector).AsSelectorPreValidated().Matches(labels.Set(pod.Labels)) {
-			properties["kubernetes_service_"+serObj.Name] = ""
+			properties[fmt.Sprintf("%s%s", k8sServicePrefix, serObj.Name)] = ""
 		}
 	}
 
 	return properties
 }
 
-// getPodCronJobProperties returns metadata of a CronJob associated with the pod.
-func getPodCronJobProperties(cronJobRef *v1.OwnerReference) map[string]string {
-	k := strings.ToLower(k8sKindCronJob)
+// getWorkloadProperties returns workload metadata for provided owner reference.
+func getWorkloadProperties(ref *v1.OwnerReference, labelKey string) map[string]string {
+	uidKey := getOTelUIDFromKind(strings.ToLower(ref.Kind))
 	return map[string]string{
-		k8sKeyWorkLoadKind: k,
-		k8sKeyWorkLoadName: cronJobRef.Name,
-		k8sKeyCronJobName:  cronJobRef.Name,
-		k + "_uid":         string(cronJobRef.UID),
+		k8sKeyWorkLoadKind: ref.Kind,
+		k8sKeyWorkLoadName: ref.Name,
+		labelKey:           ref.Name,
+		uidKey:             string(ref.UID),
 	}
 }
 
-// getPodDeploymentProperties returns metadata of a Deployment associated with the pod.
-func getPodDeploymentProperties(rsRef *v1.OwnerReference) map[string]string {
-	k := strings.ToLower(k8sKindReplicaSet)
-	return map[string]string{
-		k8sKeyWorkLoadKind:   k,
-		k8sKeyWorkLoadName:   rsRef.Name,
-		k8sKeyDeploymentName: rsRef.Name,
-		k + "_uid":           string(rsRef.UID),
-	}
-}
-
-// getPodWorkloadProperties returns metadata of a Kubernetes workload associated with the pod.
-func getPodWorkloadProperties(workloadName string, workloadType string) map[string]string {
-	return map[string]string{
-		k8sKeyWorkLoadKind: strings.ToLower(workloadType),
-		k8sKeyWorkLoadName: workloadName,
-	}
-}
-
-func getPodContainerProperties(pod *corev1.Pod) map[ResourceID]*KubernetesMetadata {
-	km := map[ResourceID]*KubernetesMetadata{}
+func getPodContainerProperties(pod *corev1.Pod) map[metadataPkg.ResourceID]*KubernetesMetadata {
+	km := map[metadataPkg.ResourceID]*KubernetesMetadata{}
 	for _, cs := range pod.Status.ContainerStatuses {
 		// Skip if container id returned is empty.
 		if cs.ContainerID == "" {

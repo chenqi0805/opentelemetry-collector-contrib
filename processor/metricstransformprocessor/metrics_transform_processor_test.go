@@ -20,54 +20,52 @@ import (
 	"testing"
 
 	metricspb "github.com/census-instrumentation/opencensus-proto/gen-go/metrics/v1"
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/collector/component/componenttest"
-	"go.opentelemetry.io/collector/consumer/consumerdata"
-	"go.opentelemetry.io/collector/consumer/pdatautil"
-	etest "go.opentelemetry.io/collector/exporter/exportertest"
+	"go.opentelemetry.io/collector/config"
+	"go.opentelemetry.io/collector/consumer/consumertest"
+	"go.opentelemetry.io/collector/processor/processorhelper"
+	"go.opentelemetry.io/collector/translator/internaldata"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/testing/protocmp"
 )
 
 func TestMetricsTransformProcessor(t *testing.T) {
 	for _, test := range standardTests {
 		t.Run(test.name, func(t *testing.T) {
-			// next stores the results of the aggregation metric processor.
-			next := &etest.SinkMetricsExporter{}
+			next := new(consumertest.MetricsSink)
 
-			mtp := newMetricsTransformProcessor(next, zap.NewExample(), test.transforms)
-			assert.NotNil(t, mtp)
+			p := newMetricsTransformProcessor(zap.NewExample(), test.transforms)
 
-			caps := mtp.GetCapabilities()
-			assert.Equal(t, true, caps.MutatesConsumedData)
+			mtp, err := processorhelper.NewMetricsProcessor(
+				&Config{
+					ProcessorSettings: config.NewProcessorSettings(config.NewID(typeStr)),
+				},
+				next,
+				p,
+				processorhelper.WithCapabilities(consumerCapabilities))
+			require.NoError(t, err)
+
+			caps := mtp.Capabilities()
+			assert.Equal(t, true, caps.MutatesData)
 			ctx := context.Background()
-			assert.NoError(t, mtp.Start(ctx, nil))
-
-			defer func() { assert.NoError(t, mtp.Shutdown(ctx)) }()
-
-			// construct metrics data to feed into the processor
-			md := consumerdata.MetricsData{Metrics: test.in}
 
 			// process
-			cErr := mtp.ConsumeMetrics(
-				context.Background(),
-				pdatautil.MetricsFromMetricsData([]consumerdata.MetricsData{
-					md,
-				}),
-			)
+			cErr := mtp.ConsumeMetrics(context.Background(), internaldata.OCToMetrics(nil, nil, test.in))
 			assert.NoError(t, cErr)
 
 			// get and check results
 			got := next.AllMetrics()
 			require.Equal(t, 1, len(got))
-			gotMD := pdatautil.MetricsToMetricsData(got[0])
-			require.Equal(t, 1, len(gotMD))
-			actualOutMetrics := gotMD[0].Metrics
+			_, _, actualOutMetrics := internaldata.ResourceMetricsToOC(got[0].ResourceMetrics().At(0))
 			require.Equal(t, len(test.out), len(actualOutMetrics))
 
 			for idx, out := range test.out {
 				actualOut := actualOutMetrics[idx]
-				assert.Equal(t, out, actualOut)
+				if diff := cmp.Diff(actualOut, out, protocmp.Transform()); diff != "" {
+					t.Errorf("Unexpected difference:\n%v", diff)
+				}
 			}
 
 			assert.NoError(t, mtp.Shutdown(ctx))
@@ -100,15 +98,7 @@ func TestComputeDistVals(t *testing.T) {
 
 	for _, test := range ssdTests {
 		t.Run(test.name, func(t *testing.T) {
-			// next stores the results of the aggregation metric processor.
-			next := &etest.SinkMetricsExporter{}
-
-			mtp := newMetricsTransformProcessor(next, nil, nil)
-			assert.NotNil(t, mtp)
-
-			assert.True(t, mtp.GetCapabilities().MutatesConsumedData)
-			assert.NoError(t, mtp.Start(context.Background(), componenttest.NewNopHost()))
-			defer func() { assert.NoError(t, mtp.Shutdown(context.Background())) }()
+			p := newMetricsTransformProcessor(nil, nil)
 
 			pointGroup1 := test.pointGroup1
 			pointGroup2 := test.pointGroup2
@@ -128,76 +118,9 @@ func TestComputeDistVals(t *testing.T) {
 				SumOfSquaredDeviation: sumOfSquaredDeviation2,
 			}
 
-			outVal := mtp.computeSumOfSquaredDeviation(val1, val2)
+			outVal := p.computeSumOfSquaredDeviation(val1, val2)
 
 			assert.Equal(t, sumOfSquaredDeviation, outVal)
-		})
-	}
-}
-
-func TestExemplers(t *testing.T) {
-	t.Run("distribution value calculation test", func(t *testing.T) {
-		// next stores the results of the aggregation metric processor.
-		next := &etest.SinkMetricsExporter{}
-
-		mtp := newMetricsTransformProcessor(next, nil, nil)
-		assert.NotNil(t, mtp)
-
-		assert.True(t, mtp.GetCapabilities().MutatesConsumedData)
-		assert.NoError(t, mtp.Start(context.Background(), componenttest.NewNopHost()))
-		defer func() { assert.NoError(t, mtp.Shutdown(context.Background())) }()
-
-		exe1 := &metricspb.DistributionValue_Exemplar{
-			Value: 1,
-		}
-
-		exe2 := &metricspb.DistributionValue_Exemplar{
-			Value: 2,
-		}
-
-		picked := mtp.pickExemplar(exe1, exe2)
-
-		assert.True(t, picked == exe1 || picked == exe2)
-	})
-}
-
-func BenchmarkMetricsTransformProcessorRenameMetrics(b *testing.B) {
-	// runs 1000 metrics through a filterprocessor with both include and exclude filters.
-	stressTest := metricsTransformTest{
-		name: "1000Metrics",
-		transforms: []internalTransform{
-			{
-				MetricName: "metric1",
-				Action:     Insert,
-				NewName:    "new/metric1",
-			},
-		},
-	}
-
-	for len(stressTest.in) < 1000 {
-		stressTest.in = append(stressTest.in, metricBuilder().setName("metric1").build())
-	}
-
-	benchmarkTests := []metricsTransformTest{stressTest}
-
-	for _, test := range benchmarkTests {
-		// next stores the results of the filter metric processor.
-		next := &etest.SinkMetricsExporter{}
-
-		mtp := newMetricsTransformProcessor(next, nil, test.transforms)
-		assert.NotNil(b, mtp)
-
-		md := consumerdata.MetricsData{Metrics: test.in}
-
-		b.Run(test.name, func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
-				assert.NoError(b, mtp.ConsumeMetrics(
-					context.Background(),
-					pdatautil.MetricsFromMetricsData([]consumerdata.MetricsData{
-						md,
-					}),
-				))
-			}
 		})
 	}
 }
@@ -214,4 +137,37 @@ func calculateSumOfSquaredDeviation(slice []float64) (sum float64, sumOfSquaredD
 		sumOfSquaredDeviation += math.Pow((e - ave), 2)
 	}
 	return
+}
+
+func TestExemplars(t *testing.T) {
+	p := newMetricsTransformProcessor(nil, nil)
+	exe1 := &metricspb.DistributionValue_Exemplar{Value: 1}
+	exe2 := &metricspb.DistributionValue_Exemplar{Value: 2}
+	picked := p.pickExemplar(exe1, exe2)
+	assert.True(t, picked == exe1 || picked == exe2)
+}
+
+func BenchmarkMetricsTransformProcessorRenameMetrics(b *testing.B) {
+	const metricCount = 1000
+
+	transforms := []internalTransform{
+		{
+			MetricIncludeFilter: internalFilterStrict{include: "metric"},
+			Action:              Insert,
+			NewName:             "new/metric1",
+		},
+	}
+
+	in := make([]*metricspb.Metric, metricCount)
+	for i := 0; i < metricCount; i++ {
+		in[i] = metricBuilder().setName("metric1").build()
+	}
+	p := newMetricsTransformProcessor(nil, transforms)
+	mtp, _ := processorhelper.NewMetricsProcessor(&Config{}, consumertest.NewNop(), p)
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		mtp.ConsumeMetrics(context.Background(), internaldata.OCToMetrics(nil, nil, in))
+	}
 }

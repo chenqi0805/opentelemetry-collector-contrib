@@ -15,9 +15,11 @@
 package alibabacloudlogserviceexporter
 
 import (
+	"context"
+
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config/configmodels"
-	"go.uber.org/zap"
+	"go.opentelemetry.io/collector/config"
+	"go.opentelemetry.io/collector/exporter/exporterhelper"
 )
 
 const (
@@ -25,31 +27,43 @@ const (
 	typeStr = "alibabacloud_logservice"
 )
 
-// Factory is the factory for LogService exporter.
-type Factory struct {
-}
-
-// Type gets the type of the Exporter config created by this factory.
-func (f *Factory) Type() configmodels.Type {
-	return configmodels.Type(typeStr)
+// NewFactory creates a factory for AlibabaCloud LogService exporter.
+func NewFactory() component.ExporterFactory {
+	return exporterhelper.NewFactory(
+		typeStr,
+		createDefaultConfig,
+		exporterhelper.WithTraces(createTracesExporter),
+		exporterhelper.WithMetrics(createMetricsExporter),
+		exporterhelper.WithLogs(createLogsExporter))
 }
 
 // CreateDefaultConfig creates the default configuration for exporter.
-func (f *Factory) CreateDefaultConfig() configmodels.Exporter {
+func createDefaultConfig() config.Exporter {
 	return &Config{
-		ExporterSettings: configmodels.ExporterSettings{
-			TypeVal: configmodels.Type(typeStr),
-			NameVal: typeStr,
-		},
+		ExporterSettings: config.NewExporterSettings(config.NewID(typeStr)),
 	}
 }
 
-// CreateTraceExporter creates a trace exporter based on this config.
-func (f *Factory) CreateTraceExporter(logger *zap.Logger, cfg configmodels.Exporter) (component.TraceExporterOld, error) {
-	return NewTraceExporter(logger, cfg)
+func createTracesExporter(
+	_ context.Context,
+	params component.ExporterCreateParams,
+	cfg config.Exporter,
+) (component.TracesExporter, error) {
+	return newTracesExporter(params.Logger, cfg)
 }
 
-// CreateMetricsExporter creates a metrics exporter based on this config.
-func (f *Factory) CreateMetricsExporter(logger *zap.Logger, cfg configmodels.Exporter) (component.MetricsExporterOld, error) {
-	return NewMetricsExporter(logger, cfg)
+func createMetricsExporter(
+	_ context.Context,
+	params component.ExporterCreateParams,
+	cfg config.Exporter,
+) (exp component.MetricsExporter, err error) {
+	return newMetricsExporter(params.Logger, cfg)
+}
+
+func createLogsExporter(
+	_ context.Context,
+	params component.ExporterCreateParams,
+	cfg config.Exporter,
+) (exp component.LogsExporter, err error) {
+	return newLogsExporter(params.Logger, cfg)
 }

@@ -24,12 +24,11 @@ import (
 
 func TestClientSpanWithStatementAttribute(t *testing.T) {
 	attributes := make(map[string]string)
-	attributes[semconventions.AttributeComponent] = "db"
-	attributes[semconventions.AttributeDBType] = "sql"
-	attributes[semconventions.AttributeDBInstance] = "customers"
+	attributes[semconventions.AttributeDBSystem] = "mysql"
+	attributes[semconventions.AttributeDBName] = "customers"
 	attributes[semconventions.AttributeDBStatement] = "SELECT * FROM user WHERE user_id = ?"
 	attributes[semconventions.AttributeDBUser] = "readonly_user"
-	attributes[semconventions.AttributeDBURL] = "mysql://db.example.com:3306"
+	attributes[semconventions.AttributeDBConnectionString] = "mysql://db.example.com:3306"
 	attributes[semconventions.AttributeNetPeerName] = "db.example.com"
 	attributes[semconventions.AttributeNetPeerPort] = "3306"
 
@@ -49,12 +48,11 @@ func TestClientSpanWithStatementAttribute(t *testing.T) {
 
 func TestClientSpanWithNonSQLDatabase(t *testing.T) {
 	attributes := make(map[string]string)
-	attributes[semconventions.AttributeComponent] = "db"
-	attributes[semconventions.AttributeDBType] = "redis"
-	attributes[semconventions.AttributeDBInstance] = "0"
+	attributes[semconventions.AttributeDBSystem] = "redis"
+	attributes[semconventions.AttributeDBName] = "0"
 	attributes[semconventions.AttributeDBStatement] = "SET key value"
 	attributes[semconventions.AttributeDBUser] = "readonly_user"
-	attributes[semconventions.AttributeDBURL] = "redis://db.example.com:3306"
+	attributes[semconventions.AttributeDBConnectionString] = "redis://db.example.com:3306"
 	attributes[semconventions.AttributeNetPeerName] = "db.example.com"
 	attributes[semconventions.AttributeNetPeerPort] = "3306"
 
@@ -65,17 +63,16 @@ func TestClientSpanWithNonSQLDatabase(t *testing.T) {
 
 func TestClientSpanWithoutDBurlAttribute(t *testing.T) {
 	attributes := make(map[string]string)
-	attributes[semconventions.AttributeComponent] = "db"
-	attributes[semconventions.AttributeDBType] = "sql"
-	attributes[semconventions.AttributeDBInstance] = "customers"
+	attributes[semconventions.AttributeDBSystem] = "postgresql"
+	attributes[semconventions.AttributeDBName] = "customers"
 	attributes[semconventions.AttributeDBStatement] = "SELECT * FROM user WHERE user_id = ?"
 	attributes[semconventions.AttributeDBUser] = "readonly_user"
-	attributes[semconventions.AttributeDBURL] = ""
+	attributes[semconventions.AttributeDBConnectionString] = ""
 	attributes[semconventions.AttributeNetPeerName] = "db.example.com"
 	attributes[semconventions.AttributeNetPeerPort] = "3306"
 	filtered, sqlData := makeSQL(attributes)
 	assert.NotNil(t, filtered)
 	assert.NotNil(t, sqlData)
 
-	assert.Equal(t, "localhost/customers", sqlData.URL)
+	assert.Equal(t, "localhost/customers", *sqlData.URL)
 }

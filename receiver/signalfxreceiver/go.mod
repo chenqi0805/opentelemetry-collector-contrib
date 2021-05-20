@@ -1,22 +1,24 @@
 module github.com/open-telemetry/opentelemetry-collector-contrib/receiver/signalfxreceiver
 
-go 1.14
+go 1.15
 
 require (
-	github.com/census-instrumentation/opencensus-proto v0.2.1
-	github.com/golang/protobuf v1.3.5
-	github.com/gorilla/mux v1.7.4
-	github.com/open-telemetry/opentelemetry-collector-contrib/exporter/signalfxexporter v0.0.0
-	github.com/open-telemetry/opentelemetry-collector-contrib/internal/common v0.4.0
-	github.com/signalfx/com_signalfx_metrics_protobuf v0.0.1
-	github.com/stretchr/testify v1.6.1
-	go.opencensus.io v0.22.4
-	go.opentelemetry.io/collector v0.5.1-0.20200722180048-c0b3cf61a63a
-	go.uber.org/zap v1.15.0
+	github.com/gorilla/mux v1.8.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/exporter/signalfxexporter v0.0.0-00010101000000-000000000000
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/splunk v0.0.0-00010101000000-000000000000
+	github.com/signalfx/com_signalfx_metrics_protobuf v0.0.2
+	github.com/stretchr/testify v1.7.0
+	go.opencensus.io v0.23.0
+	go.opentelemetry.io/collector v0.27.0
+	go.uber.org/zap v1.16.0
 )
 
 replace github.com/open-telemetry/opentelemetry-collector-contrib/exporter/signalfxexporter => ../../exporter/signalfxexporter
 
 replace github.com/open-telemetry/opentelemetry-collector-contrib/internal/common => ../../internal/common
 
-replace github.com/open-telemetry/opentelemetry-collector-contrib/receiver/k8sclusterreceiver => ../../receiver/k8sclusterreceiver
+replace github.com/open-telemetry/opentelemetry-collector-contrib/internal/splunk => ../../internal/splunk
+
+replace github.com/open-telemetry/opentelemetry-collector-contrib/pkg/experimentalmetricmetadata => ../../pkg/experimentalmetricmetadata
+
+replace github.com/open-telemetry/opentelemetry-collector-contrib/pkg/batchperresourceattr => ../../pkg/batchperresourceattr

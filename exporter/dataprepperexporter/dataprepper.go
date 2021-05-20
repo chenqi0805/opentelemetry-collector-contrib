@@ -102,7 +102,7 @@ func (e *exporter) export(ctx context.Context, url string, request []byte) error
 	if err != nil {
 		return consumererror.Permanent(err)
 	}
-	req.Header.Set("Content-Type", "application/x-protobuf")
+	req.Header.Set("Content-Type", "application/protobuf")
 
 	resp, err := e.client.Do(req)
 	if err != nil {

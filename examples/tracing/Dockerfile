@@ -3,6 +3,7 @@ FROM golang:1.14 AS build
 WORKDIR /src
 ADD . /src
 
+RUN go env -w GOPROXY=direct
 RUN make otelcontribcol
 
 FROM alpine:latest as certs

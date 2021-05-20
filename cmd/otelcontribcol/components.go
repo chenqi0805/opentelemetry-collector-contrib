@@ -15,6 +15,7 @@
 package main
 
 import (
+	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/dataprepperexporter"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/component/componenterror"
 	"go.opentelemetry.io/collector/config"
@@ -105,6 +106,7 @@ func components() (config.Factories, error) {
 		&splunkhecexporter.Factory{},
 		&elasticexporter.Factory{},
 		&alibabacloudlogserviceexporter.Factory{},
+		dataprepperexporter.NewFactory(),
 	}
 	for _, exp := range factories.Exporters {
 		exporters = append(exporters, exp)

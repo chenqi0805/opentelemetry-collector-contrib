@@ -1,68 +1,64 @@
 package dataprepperexporter
 
-//import (
-//	"context"
-//	"errors"
-//	"fmt"
-//	"net"
-//	"net/http"
-//	"testing"
-//	"time"
-//
-//	"github.com/stretchr/testify/assert"
-//	"github.com/stretchr/testify/require"
-//	"go.uber.org/zap"
-//	"google.golang.org/grpc/codes"
-//	"google.golang.org/grpc/status"
-//	"google.golang.org/protobuf/proto"
-//
-//	"go.opentelemetry.io/collector/component"
-//	"go.opentelemetry.io/collector/component/componenttest"
-//	"go.opentelemetry.io/collector/config"
-//	"go.opentelemetry.io/collector/config/confighttp"
-//	"go.opentelemetry.io/collector/consumer"
-//	"go.opentelemetry.io/collector/consumer/consumererror"
-//	"go.opentelemetry.io/collector/consumer/consumertest"
-//	"go.opentelemetry.io/collector/consumer/pdata"
-//	"go.opentelemetry.io/collector/exporter/exporterhelper"
-//	"go.opentelemetry.io/collector/internal/testdata"
-//	"go.opentelemetry.io/collector/receiver/otlpreceiver"
-//	"go.opentelemetry.io/collector/testutil"
-//)
-//
-//func TestInvalidConfig(t *testing.T) {
-//	config := &Config{
-//		HTTPClientSettings: confighttp.HTTPClientSettings{
-//			Endpoint: "",
-//		},
-//	}
-//	f := NewFactory()
-//	params := component.ExporterCreateParams{Logger: zap.NewNop()}
-//	_, err := f.CreateTracesExporter(context.Background(), params, config)
-//	require.Error(t, err)
-//	_, err = f.CreateMetricsExporter(context.Background(), params, config)
-//	require.Error(t, err)
-//	_, err = f.CreateLogsExporter(context.Background(), params, config)
-//	require.Error(t, err)
-//}
-//
-//func TestTraceNoBackend(t *testing.T) {
-//	addr := testutil.GetAvailableLocalAddress(t)
-//	exp := startTracesExporter(t, "", fmt.Sprintf("http://%s/v1/traces", addr))
-//	td := testdata.GenerateTracesOneSpan()
-//	assert.Error(t, exp.ConsumeTraces(context.Background(), td))
-//}
-//
-//func TestTraceInvalidUrl(t *testing.T) {
-//	exp := startTracesExporter(t, "http:/\\//this_is_an/*/invalid_url", "")
-//	td := testdata.GenerateTracesOneSpan()
-//	assert.Error(t, exp.ConsumeTraces(context.Background(), td))
-//
-//	exp = startTracesExporter(t, "", "http:/\\//this_is_an/*/invalid_url")
-//	td = testdata.GenerateTracesOneSpan()
-//	assert.Error(t, exp.ConsumeTraces(context.Background(), td))
-//}
-//
+import (
+	"context"
+	"fmt"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/dataprepperexporter/testdata"
+	"net"
+	"net/http"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+
+	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/component/componenttest"
+	"go.opentelemetry.io/collector/config"
+	"go.opentelemetry.io/collector/config/confighttp"
+	"go.opentelemetry.io/collector/consumer/consumererror"
+	"go.opentelemetry.io/collector/consumer/pdata"
+	"go.opentelemetry.io/collector/exporter/exporterhelper"
+	"go.opentelemetry.io/collector/testutil"
+)
+
+func TestInvalidConfig(t *testing.T) {
+	config := &Config{
+		HTTPClientSettings: confighttp.HTTPClientSettings{
+			Endpoint: "",
+		},
+	}
+	f := NewFactory()
+	params := component.ExporterCreateParams{Logger: zap.NewNop()}
+	_, err := f.CreateTracesExporter(context.Background(), params, config)
+	require.Error(t, err)
+	_, err = f.CreateMetricsExporter(context.Background(), params, config)
+	require.Error(t, err)
+	_, err = f.CreateLogsExporter(context.Background(), params, config)
+	require.Error(t, err)
+}
+
+func TestTraceNoBackend(t *testing.T) {
+	addr := testutil.GetAvailableLocalAddress(t)
+	exp := startTracesExporter(t, "", fmt.Sprintf("http://%s/v1/traces", addr))
+	td := testdata.GenerateTracesOneSpan()
+	assert.Error(t, exp.ConsumeTraces(context.Background(), td))
+}
+
+func TestTraceInvalidUrl(t *testing.T) {
+	exp := startTracesExporter(t, "http:/\\//this_is_an/*/invalid_url", "")
+	td := testdata.GenerateTracesOneSpan()
+	assert.Error(t, exp.ConsumeTraces(context.Background(), td))
+
+	exp = startTracesExporter(t, "", "http:/\\//this_is_an/*/invalid_url")
+	td = testdata.GenerateTracesOneSpan()
+	assert.Error(t, exp.ConsumeTraces(context.Background(), td))
+}
+
 //func TestTraceError(t *testing.T) {
 //	addr := testutil.GetAvailableLocalAddress(t)
 //
@@ -72,7 +68,7 @@ package dataprepperexporter
 //	td := testdata.GenerateTracesOneSpan()
 //	assert.Error(t, exp.ConsumeTraces(context.Background(), td))
 //}
-//
+
 //func TestTraceRoundTrip(t *testing.T) {
 //	addr := testutil.GetAvailableLocalAddress(t)
 //
@@ -115,7 +111,7 @@ package dataprepperexporter
 //		})
 //	}
 //}
-//
+
 //func TestCompressionOptions(t *testing.T) {
 //	addr := testutil.GetAvailableLocalAddress(t)
 //
@@ -170,7 +166,7 @@ package dataprepperexporter
 //		})
 //	}
 //}
-//
+
 //func TestMetricsError(t *testing.T) {
 //	addr := testutil.GetAvailableLocalAddress(t)
 //
@@ -180,7 +176,7 @@ package dataprepperexporter
 //	md := testdata.GenerateMetricsOneMetric()
 //	assert.Error(t, exp.ConsumeMetrics(context.Background(), md))
 //}
-//
+
 //func TestMetricsRoundTrip(t *testing.T) {
 //	addr := testutil.GetAvailableLocalAddress(t)
 //
@@ -223,7 +219,7 @@ package dataprepperexporter
 //		})
 //	}
 //}
-//
+
 //func TestLogsError(t *testing.T) {
 //	addr := testutil.GetAvailableLocalAddress(t)
 //
@@ -233,7 +229,7 @@ package dataprepperexporter
 //	md := testdata.GenerateLogsOneLogRecord()
 //	assert.Error(t, exp.ConsumeLogs(context.Background(), md))
 //}
-//
+
 //func TestLogsRoundTrip(t *testing.T) {
 //	addr := testutil.GetAvailableLocalAddress(t)
 //
@@ -276,45 +272,45 @@ package dataprepperexporter
 //		})
 //	}
 //}
-//
-//func startTracesExporter(t *testing.T, baseURL string, overrideURL string) component.TracesExporter {
-//	factory := NewFactory()
-//	cfg := createExporterConfig(baseURL, factory.CreateDefaultConfig())
-//	cfg.TracesEndpoint = overrideURL
-//	exp, err := factory.CreateTracesExporter(context.Background(), component.ExporterCreateParams{Logger: zap.NewNop()}, cfg)
-//	require.NoError(t, err)
-//	startAndCleanup(t, exp)
-//	return exp
-//}
-//
-//func startMetricsExporter(t *testing.T, baseURL string, overrideURL string) component.MetricsExporter {
-//	factory := NewFactory()
-//	cfg := createExporterConfig(baseURL, factory.CreateDefaultConfig())
-//	cfg.MetricsEndpoint = overrideURL
-//	exp, err := factory.CreateMetricsExporter(context.Background(), component.ExporterCreateParams{Logger: zap.NewNop()}, cfg)
-//	require.NoError(t, err)
-//	startAndCleanup(t, exp)
-//	return exp
-//}
-//
-//func startLogsExporter(t *testing.T, baseURL string, overrideURL string) component.LogsExporter {
-//	factory := NewFactory()
-//	cfg := createExporterConfig(baseURL, factory.CreateDefaultConfig())
-//	cfg.LogsEndpoint = overrideURL
-//	exp, err := factory.CreateLogsExporter(context.Background(), component.ExporterCreateParams{Logger: zap.NewNop()}, cfg)
-//	require.NoError(t, err)
-//	startAndCleanup(t, exp)
-//	return exp
-//}
-//
-//func createExporterConfig(baseURL string, defaultCfg config.Exporter) *Config {
-//	cfg := defaultCfg.(*Config)
-//	cfg.Endpoint = baseURL
-//	cfg.QueueSettings.Enabled = false
-//	cfg.RetrySettings.Enabled = false
-//	return cfg
-//}
-//
+
+func startTracesExporter(t *testing.T, baseURL string, overrideURL string) component.TracesExporter {
+	factory := NewFactory()
+	cfg := createExporterConfig(baseURL, factory.CreateDefaultConfig())
+	cfg.TracesEndpoint = overrideURL
+	exp, err := factory.CreateTracesExporter(context.Background(), component.ExporterCreateParams{Logger: zap.NewNop()}, cfg)
+	require.NoError(t, err)
+	startAndCleanup(t, exp)
+	return exp
+}
+
+func startMetricsExporter(t *testing.T, baseURL string, overrideURL string) component.MetricsExporter {
+	factory := NewFactory()
+	cfg := createExporterConfig(baseURL, factory.CreateDefaultConfig())
+	cfg.MetricsEndpoint = overrideURL
+	exp, err := factory.CreateMetricsExporter(context.Background(), component.ExporterCreateParams{Logger: zap.NewNop()}, cfg)
+	require.NoError(t, err)
+	startAndCleanup(t, exp)
+	return exp
+}
+
+func startLogsExporter(t *testing.T, baseURL string, overrideURL string) component.LogsExporter {
+	factory := NewFactory()
+	cfg := createExporterConfig(baseURL, factory.CreateDefaultConfig())
+	cfg.LogsEndpoint = overrideURL
+	exp, err := factory.CreateLogsExporter(context.Background(), component.ExporterCreateParams{Logger: zap.NewNop()}, cfg)
+	require.NoError(t, err)
+	startAndCleanup(t, exp)
+	return exp
+}
+
+func createExporterConfig(baseURL string, defaultCfg config.Exporter) *Config {
+	cfg := defaultCfg.(*Config)
+	cfg.Endpoint = baseURL
+	cfg.QueueSettings.Enabled = false
+	cfg.RetrySettings.Enabled = false
+	return cfg
+}
+
 //func startTracesReceiver(t *testing.T, addr string, next consumer.Traces) {
 //	factory := otlpreceiver.NewFactory()
 //	cfg := createReceiverConfig(addr, factory.CreateDefaultConfig())
@@ -322,7 +318,7 @@ package dataprepperexporter
 //	require.NoError(t, err)
 //	startAndCleanup(t, recv)
 //}
-//
+
 //func startMetricsReceiver(t *testing.T, addr string, next consumer.Metrics) {
 //	factory := otlpreceiver.NewFactory()
 //	cfg := createReceiverConfig(addr, factory.CreateDefaultConfig())
@@ -330,7 +326,7 @@ package dataprepperexporter
 //	require.NoError(t, err)
 //	startAndCleanup(t, recv)
 //}
-//
+
 //func startLogsReceiver(t *testing.T, addr string, next consumer.Logs) {
 //	factory := otlpreceiver.NewFactory()
 //	cfg := createReceiverConfig(addr, factory.CreateDefaultConfig())
@@ -338,116 +334,116 @@ package dataprepperexporter
 //	require.NoError(t, err)
 //	startAndCleanup(t, recv)
 //}
-//
+
 //func createReceiverConfig(addr string, defaultCfg config.Receiver) *otlpreceiver.Config {
 //	cfg := defaultCfg.(*otlpreceiver.Config)
 //	cfg.HTTP.Endpoint = addr
 //	cfg.GRPC = nil
 //	return cfg
 //}
-//
-//func startAndCleanup(t *testing.T, cmp component.Component) {
-//	require.NoError(t, cmp.Start(context.Background(), componenttest.NewNopHost()))
-//	t.Cleanup(func() {
-//		require.NoError(t, cmp.Shutdown(context.Background()))
-//	})
-//}
-//
-//func TestErrorResponses(t *testing.T) {
-//	addr := testutil.GetAvailableLocalAddress(t)
-//	errMsgPrefix := fmt.Sprintf("error exporting items, request to http://%s/v1/traces responded with HTTP Status Code ", addr)
-//
-//	tests := []struct {
-//		name           string
-//		responseStatus int
-//		responseBody   *status.Status
-//		err            error
-//		isPermErr      bool
-//		headers        map[string]string
-//	}{
-//		{
-//			name:           "400",
-//			responseStatus: http.StatusBadRequest,
-//			responseBody:   status.New(codes.InvalidArgument, "Bad field"),
-//			isPermErr:      true,
-//		},
-//		{
-//			name:           "404",
-//			responseStatus: http.StatusNotFound,
-//			err:            fmt.Errorf(errMsgPrefix + "404"),
-//		},
-//		{
-//			name:           "419",
-//			responseStatus: http.StatusTooManyRequests,
-//			responseBody:   status.New(codes.InvalidArgument, "Quota exceeded"),
-//			err: exporterhelper.NewThrottleRetry(
-//				fmt.Errorf(errMsgPrefix+"429, Message=Quota exceeded, Details=[]"),
-//				time.Duration(0)*time.Second),
-//		},
-//		{
-//			name:           "503",
-//			responseStatus: http.StatusServiceUnavailable,
-//			responseBody:   status.New(codes.InvalidArgument, "Server overloaded"),
-//			err: exporterhelper.NewThrottleRetry(
-//				fmt.Errorf(errMsgPrefix+"503, Message=Server overloaded, Details=[]"),
-//				time.Duration(0)*time.Second),
-//		},
-//		{
-//			name:           "503-Retry-After",
-//			responseStatus: http.StatusServiceUnavailable,
-//			responseBody:   status.New(codes.InvalidArgument, "Server overloaded"),
-//			headers:        map[string]string{"Retry-After": "30"},
-//			err: exporterhelper.NewThrottleRetry(
-//				fmt.Errorf(errMsgPrefix+"503, Message=Server overloaded, Details=[]"),
-//				time.Duration(30)*time.Second),
-//		},
-//	}
-//
-//	for _, test := range tests {
-//		t.Run(test.name, func(t *testing.T) {
-//			mux := http.NewServeMux()
-//			mux.HandleFunc("/v1/traces", func(writer http.ResponseWriter, request *http.Request) {
-//				for k, v := range test.headers {
-//					writer.Header().Add(k, v)
-//				}
-//				writer.WriteHeader(test.responseStatus)
-//				if test.responseBody != nil {
-//					msg, err := proto.Marshal(test.responseBody.Proto())
-//					require.NoError(t, err)
-//					_, err = writer.Write(msg)
-//					require.NoError(t, err)
-//				}
-//			})
-//			srv := http.Server{
-//				Addr:    addr,
-//				Handler: mux,
-//			}
-//			ln, err := net.Listen("tcp", addr)
-//			require.NoError(t, err)
-//			go func() {
-//				_ = srv.Serve(ln)
-//			}()
-//
-//			cfg := &Config{
-//				ExporterSettings: config.NewExporterSettings(config.NewID(typeStr)),
-//				TracesEndpoint:   fmt.Sprintf("http://%s/v1/traces", addr),
-//				// Create without QueueSettings and RetrySettings so that ConsumeTraces
-//				// returns the errors that we want to check immediately.
-//			}
-//			exp, err := createTracesExporter(context.Background(), component.ExporterCreateParams{Logger: zap.NewNop()}, cfg)
-//			require.NoError(t, err)
-//
-//			traces := pdata.NewTraces()
-//			err = exp.ConsumeTraces(context.Background(), traces)
-//			assert.Error(t, err)
-//
-//			if test.isPermErr {
-//				assert.True(t, consumererror.IsPermanent(err))
-//			} else {
-//				assert.EqualValues(t, test.err, err)
-//			}
-//
-//			srv.Close()
-//		})
-//	}
-//}
+
+func startAndCleanup(t *testing.T, cmp component.Component) {
+	require.NoError(t, cmp.Start(context.Background(), componenttest.NewNopHost()))
+	t.Cleanup(func() {
+		require.NoError(t, cmp.Shutdown(context.Background()))
+	})
+}
+
+func TestErrorResponses(t *testing.T) {
+	addr := testutil.GetAvailableLocalAddress(t)
+	errMsgPrefix := fmt.Sprintf("error exporting items, request to http://%s/v1/traces responded with HTTP Status Code ", addr)
+
+	tests := []struct {
+		name           string
+		responseStatus int
+		responseBody   *status.Status
+		err            error
+		isPermErr      bool
+		headers        map[string]string
+	}{
+		{
+			name:           "400",
+			responseStatus: http.StatusBadRequest,
+			responseBody:   status.New(codes.InvalidArgument, "Bad field"),
+			isPermErr:      true,
+		},
+		{
+			name:           "404",
+			responseStatus: http.StatusNotFound,
+			err:            fmt.Errorf(errMsgPrefix + "404"),
+		},
+		{
+			name:           "419",
+			responseStatus: http.StatusTooManyRequests,
+			responseBody:   status.New(codes.InvalidArgument, "Quota exceeded"),
+			err: exporterhelper.NewThrottleRetry(
+				fmt.Errorf(errMsgPrefix+"429, Message=Quota exceeded, Details=[]"),
+				time.Duration(0)*time.Second),
+		},
+		{
+			name:           "503",
+			responseStatus: http.StatusServiceUnavailable,
+			responseBody:   status.New(codes.InvalidArgument, "Server overloaded"),
+			err: exporterhelper.NewThrottleRetry(
+				fmt.Errorf(errMsgPrefix+"503, Message=Server overloaded, Details=[]"),
+				time.Duration(0)*time.Second),
+		},
+		{
+			name:           "503-Retry-After",
+			responseStatus: http.StatusServiceUnavailable,
+			responseBody:   status.New(codes.InvalidArgument, "Server overloaded"),
+			headers:        map[string]string{"Retry-After": "30"},
+			err: exporterhelper.NewThrottleRetry(
+				fmt.Errorf(errMsgPrefix+"503, Message=Server overloaded, Details=[]"),
+				time.Duration(30)*time.Second),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/v1/traces", func(writer http.ResponseWriter, request *http.Request) {
+				for k, v := range test.headers {
+					writer.Header().Add(k, v)
+				}
+				writer.WriteHeader(test.responseStatus)
+				if test.responseBody != nil {
+					msg, err := proto.Marshal(test.responseBody.Proto())
+					require.NoError(t, err)
+					_, err = writer.Write(msg)
+					require.NoError(t, err)
+				}
+			})
+			srv := http.Server{
+				Addr:    addr,
+				Handler: mux,
+			}
+			ln, err := net.Listen("tcp", addr)
+			require.NoError(t, err)
+			go func() {
+				_ = srv.Serve(ln)
+			}()
+
+			cfg := &Config{
+				ExporterSettings: config.NewExporterSettings(config.NewID(typeStr)),
+				TracesEndpoint:   fmt.Sprintf("http://%s/v1/traces", addr),
+				// Create without QueueSettings and RetrySettings so that ConsumeTraces
+				// returns the errors that we want to check immediately.
+			}
+			exp, err := createTracesExporter(context.Background(), component.ExporterCreateParams{Logger: zap.NewNop()}, cfg)
+			require.NoError(t, err)
+
+			traces := pdata.NewTraces()
+			err = exp.ConsumeTraces(context.Background(), traces)
+			assert.Error(t, err)
+
+			if test.isPermErr {
+				assert.True(t, consumererror.IsPermanent(err))
+			} else {
+				assert.EqualValues(t, test.err, err)
+			}
+
+			srv.Close()
+		})
+	}
+}

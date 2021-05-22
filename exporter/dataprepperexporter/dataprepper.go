@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -32,11 +34,22 @@ type exporter struct {
 	metricsURL string
 	logsURL    string
 	logger     *zap.Logger
+	hasAWSAuth bool
+	hasSigV4   bool
+	header     string
+	region     string
 }
 
 const (
 	headerRetryAfter         = "Retry-After"
 	maxHTTPResponseReadBytes = 64 * 1024
+	headerDataPrepper        = "x-amz-es-dp-internal"
+	service                  = "es"
+)
+
+var (
+	awsCredentials = credentials.NewEnvCredentials()
+	signer         = v4.NewSigner(awsCredentials)
 )
 
 // Crete new exporter.
@@ -48,6 +61,17 @@ func newExporter(cfg config.Exporter, logger *zap.Logger) (*exporter, error) {
 		if err != nil {
 			return nil, errors.New("endpoint must be a valid URL")
 		}
+	}
+
+	hasAWSAuth := HasAWSAuth(*oCfg)
+	hasSigV4 := HasSigV4(oCfg.AWSAuthConfig)
+	header := ""
+	if hasAWSAuth {
+		res, err := getDataPrepperHeader(oCfg.AWSAuthConfig.PipelineArn)
+		if err != nil {
+			return nil, err
+		}
+		header = res
 	}
 
 	client, err := oCfg.HTTPClientSettings.ToClient()
@@ -67,6 +91,10 @@ func newExporter(cfg config.Exporter, logger *zap.Logger) (*exporter, error) {
 		config: oCfg,
 		client: client,
 		logger: logger,
+		hasAWSAuth: hasAWSAuth,
+		hasSigV4: hasSigV4,
+		header: header,
+		region: oCfg.AWSAuthConfig.SigV4Config.Region,
 	}, nil
 }
 
@@ -98,11 +126,21 @@ func (e *exporter) pushLogData(ctx context.Context, logs pdata.Logs) error {
 
 func (e *exporter) export(ctx context.Context, url string, request []byte) error {
 	e.logger.Debug("Preparing to make HTTP request", zap.String("url", url))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(request))
+	body := bytes.NewReader(request)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 	if err != nil {
 		return consumererror.Permanent(err)
 	}
 	req.Header.Set("Content-Type", "application/protobuf")
+	if e.hasAWSAuth {
+		req.Header.Set(headerDataPrepper, e.header)
+		if e.hasSigV4 {
+			_, err = signer.Sign(req, body, service, e.region, time.Now())
+			if err != nil {
+				return fmt.Errorf("failed to sign an HTTP request: #{err}")
+			}
+		}
+	}
 
 	resp, err := e.client.Do(req)
 	if err != nil {

@@ -26,6 +26,10 @@ func TestLoadConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
+	t.Run("Validate", func(t *testing.T) {
+		assert.NoError(t, cfg.Validate())
+	})
+
 	t.Run("DefaultConfig", func(t *testing.T) {
 		defaultExporter := cfg.Exporters[config.NewID(typeStr)]
 		assert.Equal(t, defaultExporter, factory.CreateDefaultConfig())

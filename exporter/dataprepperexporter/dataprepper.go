@@ -206,6 +206,7 @@ func getCredsFromConfig(v4Config SigV4Config) *credentials.Credentials {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		Config: aws.Config{Region: aws.String(v4Config.Region)},
 	}))
+	// TODO: how to test assume role
 	if v4Config.RoleArn != "" {
 		return stscreds.NewCredentials(sess, v4Config.RoleArn)
 	}

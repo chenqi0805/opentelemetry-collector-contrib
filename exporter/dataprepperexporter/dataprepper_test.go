@@ -3,9 +3,12 @@ package dataprepperexporter
 import (
 	"context"
 	"fmt"
+	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/dataprepperexporter/testdata"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -44,260 +47,82 @@ func TestInvalidConfig(t *testing.T) {
 
 func TestTraceNoBackend(t *testing.T) {
 	addr := testutil.GetAvailableLocalAddress(t)
-	exp := startTracesExporter(t, "", fmt.Sprintf("http://%s/v1/traces", addr))
+	exp := startTracesExporter(t, "", fmt.Sprintf("http://%s/v1/traces", addr), "", "")
 	td := testdata.GenerateTracesOneSpan()
 	assert.Error(t, exp.ConsumeTraces(context.Background(), td))
 }
 
 func TestTraceInvalidUrl(t *testing.T) {
-	exp := startTracesExporter(t, "http:/\\//this_is_an/*/invalid_url", "")
+	exp := startTracesExporter(t, "http:/\\//this_is_an/*/invalid_url", "", "", "")
 	td := testdata.GenerateTracesOneSpan()
 	assert.Error(t, exp.ConsumeTraces(context.Background(), td))
 
-	exp = startTracesExporter(t, "", "http:/\\//this_is_an/*/invalid_url")
+	exp = startTracesExporter(t, "", "http:/\\//this_is_an/*/invalid_url", "", "")
 	td = testdata.GenerateTracesOneSpan()
 	assert.Error(t, exp.ConsumeTraces(context.Background(), td))
 }
 
-//func TestTraceError(t *testing.T) {
-//	addr := testutil.GetAvailableLocalAddress(t)
-//
-//	startTracesReceiver(t, addr, consumertest.NewErr(errors.New("my_error")))
-//	exp := startTracesExporter(t, "", fmt.Sprintf("http://%s/v1/traces", addr))
-//
-//	td := testdata.GenerateTracesOneSpan()
-//	assert.Error(t, exp.ConsumeTraces(context.Background(), td))
-//}
+func TestTraceRoundTripOnlyBaseUrl(t *testing.T) {
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "application/protobuf", r.Header.Get("Content-Type"))
+	}
+	server := startTestHttpServer(t, "/v1/traces", handler)
+	defer server.Close()
+	exp := startTracesExporter(t, server.URL, "", "", "")
+	td := testdata.GenerateTracesOneSpan()
+	assert.NoError(t, exp.ConsumeTraces(context.Background(), td))
+}
 
-//func TestTraceRoundTrip(t *testing.T) {
-//	addr := testutil.GetAvailableLocalAddress(t)
-//
-//	tests := []struct {
-//		name        string
-//		baseURL     string
-//		overrideURL string
-//	}{
-//		{
-//			name:        "wrongbase",
-//			baseURL:     "http://wronghostname",
-//			overrideURL: fmt.Sprintf("http://%s/v1/traces", addr),
-//		},
-//		{
-//			name:        "onlybase",
-//			baseURL:     fmt.Sprintf("http://%s", addr),
-//			overrideURL: "",
-//		},
-//		{
-//			name:        "override",
-//			baseURL:     "",
-//			overrideURL: fmt.Sprintf("http://%s/v1/traces", addr),
-//		},
-//	}
-//
-//	for _, test := range tests {
-//		t.Run(test.name, func(t *testing.T) {
-//			sink := new(consumertest.TracesSink)
-//			startTracesReceiver(t, addr, sink)
-//			exp := startTracesExporter(t, test.baseURL, test.overrideURL)
-//
-//			td := testdata.GenerateTracesOneSpan()
-//			assert.NoError(t, exp.ConsumeTraces(context.Background(), td))
-//			require.Eventually(t, func() bool {
-//				return sink.SpansCount() > 0
-//			}, 1*time.Second, 10*time.Millisecond)
-//			allTraces := sink.AllTraces()
-//			require.Len(t, allTraces, 1)
-//			assert.EqualValues(t, td, allTraces[0])
-//		})
-//	}
-//}
+func TestTraceRoundTripWithTraceEndpoint(t *testing.T) {
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "application/protobuf", r.Header.Get("Content-Type"))
+	}
+	server := startTestHttpServer(t, "/custom/traces", handler)
+	defer server.Close()
+	exp := startTracesExporter(t, server.URL, server.URL + "/custom/traces", "", "")
+	td := testdata.GenerateTracesOneSpan()
+	assert.NoError(t, exp.ConsumeTraces(context.Background(), td))
+}
 
-//func TestCompressionOptions(t *testing.T) {
-//	addr := testutil.GetAvailableLocalAddress(t)
-//
-//	tests := []struct {
-//		name        string
-//		baseURL     string
-//		compression string
-//		err         bool
-//	}{
-//		{
-//			name:        "no compression",
-//			baseURL:     fmt.Sprintf("http://%s", addr),
-//			compression: "",
-//		},
-//		{
-//			name:        "gzip",
-//			baseURL:     fmt.Sprintf("http://%s", addr),
-//			compression: "gzip",
-//		},
-//		{
-//			name:        "incorrect compression",
-//			baseURL:     fmt.Sprintf("http://%s", addr),
-//			compression: "gzip2",
-//			err:         true,
-//		},
-//	}
-//
-//	for _, test := range tests {
-//		t.Run(test.name, func(t *testing.T) {
-//			sink := new(consumertest.TracesSink)
-//			startTracesReceiver(t, addr, sink)
-//
-//			factory := NewFactory()
-//			cfg := createExporterConfig(test.baseURL, factory.CreateDefaultConfig())
-//			cfg.Compression = test.compression
-//			exp, err := factory.CreateTracesExporter(context.Background(), component.ExporterCreateParams{Logger: zap.NewNop()}, cfg)
-//			if test.err {
-//				assert.Error(t, err)
-//				return
-//			}
-//			require.NoError(t, err)
-//			startAndCleanup(t, exp)
-//
-//			td := testdata.GenerateTracesOneSpan()
-//			assert.NoError(t, exp.ConsumeTraces(context.Background(), td))
-//			require.Eventually(t, func() bool {
-//				return sink.SpansCount() > 0
-//			}, 1*time.Second, 10*time.Millisecond)
-//			allTraces := sink.AllTraces()
-//			require.Len(t, allTraces, 1)
-//			assert.EqualValues(t, td, allTraces[0])
-//		})
-//	}
-//}
+func TestTraceRoundTripAWSEndpointNoSigV4(t *testing.T) {
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "application/protobuf", r.Header.Get("Content-Type"))
+		assert.Equal(t, "123456789012-test-name.internal.dp.aes.com", r.Header.Get(headerDataPrepper))
+	}
+	server := startTestHttpServer(t, "/v1/traces", handler)
+	defer server.Close()
+	exp := startTracesExporter(t, server.URL, "", "arn:aws:es::123456789012:es/dataprepper/test-name", "")
+	td := testdata.GenerateTracesOneSpan()
+	assert.NoError(t, exp.ConsumeTraces(context.Background(), td))
+}
 
-//func TestMetricsError(t *testing.T) {
-//	addr := testutil.GetAvailableLocalAddress(t)
-//
-//	startMetricsReceiver(t, addr, consumertest.NewErr(errors.New("my_error")))
-//	exp := startMetricsExporter(t, "", fmt.Sprintf("http://%s/v1/metrics", addr))
-//
-//	md := testdata.GenerateMetricsOneMetric()
-//	assert.Error(t, exp.ConsumeMetrics(context.Background(), md))
-//}
+func TestTraceRoundTripAWSEndpointSigV4(t *testing.T) {
+	os.Setenv("AWS_ACCESS_KEY", "TEST_AWS_ACCESS_KEY")
+	os.Setenv("AWS_SECRET_ACCESS_KEY", "TEST_AWS_SECRET_ACCESS_KEY")
+	defer os.Clearenv()
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "application/protobuf", r.Header.Get("Content-Type"))
+		assert.Equal(t, "123456789012-test-name.internal.dp.aes.com", r.Header.Get(headerDataPrepper))
+		authStr := r.Header.Get("Authorization")
+		assert.Contains(t, authStr, "Credential=TEST_AWS_ACCESS_KEY")
+		_, err := v4.GetSignedRequestSignature(r)
+		assert.NoError(t, err)
+	}
+	server := startTestHttpServer(t, "/v1/traces", handler)
+	defer server.Close()
+	exp := startTracesExporter(t, server.URL, "", "arn:aws:es::123456789012:es/dataprepper/test-name", "us-east-1")
+	td := testdata.GenerateTracesOneSpan()
+	assert.NoError(t, exp.ConsumeTraces(context.Background(), td))
+}
 
-//func TestMetricsRoundTrip(t *testing.T) {
-//	addr := testutil.GetAvailableLocalAddress(t)
-//
-//	tests := []struct {
-//		name        string
-//		baseURL     string
-//		overrideURL string
-//	}{
-//		{
-//			name:        "wrongbase",
-//			baseURL:     "http://wronghostname",
-//			overrideURL: fmt.Sprintf("http://%s/v1/metrics", addr),
-//		},
-//		{
-//			name:        "onlybase",
-//			baseURL:     fmt.Sprintf("http://%s", addr),
-//			overrideURL: "",
-//		},
-//		{
-//			name:        "override",
-//			baseURL:     "",
-//			overrideURL: fmt.Sprintf("http://%s/v1/metrics", addr),
-//		},
-//	}
-//
-//	for _, test := range tests {
-//		t.Run(test.name, func(t *testing.T) {
-//			sink := new(consumertest.MetricsSink)
-//			startMetricsReceiver(t, addr, sink)
-//			exp := startMetricsExporter(t, test.baseURL, test.overrideURL)
-//
-//			md := testdata.GenerateMetricsOneMetric()
-//			assert.NoError(t, exp.ConsumeMetrics(context.Background(), md))
-//			require.Eventually(t, func() bool {
-//				return sink.MetricsCount() > 0
-//			}, 1*time.Second, 10*time.Millisecond)
-//			allMetrics := sink.AllMetrics()
-//			require.Len(t, allMetrics, 1)
-//			assert.EqualValues(t, md, allMetrics[0])
-//		})
-//	}
-//}
-
-//func TestLogsError(t *testing.T) {
-//	addr := testutil.GetAvailableLocalAddress(t)
-//
-//	startLogsReceiver(t, addr, consumertest.NewErr(errors.New("my_error")))
-//	exp := startLogsExporter(t, "", fmt.Sprintf("http://%s/v1/logs", addr))
-//
-//	md := testdata.GenerateLogsOneLogRecord()
-//	assert.Error(t, exp.ConsumeLogs(context.Background(), md))
-//}
-
-//func TestLogsRoundTrip(t *testing.T) {
-//	addr := testutil.GetAvailableLocalAddress(t)
-//
-//	tests := []struct {
-//		name        string
-//		baseURL     string
-//		overrideURL string
-//	}{
-//		{
-//			name:        "wrongbase",
-//			baseURL:     "http://wronghostname",
-//			overrideURL: fmt.Sprintf("http://%s/v1/logs", addr),
-//		},
-//		{
-//			name:        "onlybase",
-//			baseURL:     fmt.Sprintf("http://%s", addr),
-//			overrideURL: "",
-//		},
-//		{
-//			name:        "override",
-//			baseURL:     "",
-//			overrideURL: fmt.Sprintf("http://%s/v1/logs", addr),
-//		},
-//	}
-//
-//	for _, test := range tests {
-//		t.Run(test.name, func(t *testing.T) {
-//			sink := new(consumertest.LogsSink)
-//			startLogsReceiver(t, addr, sink)
-//			exp := startLogsExporter(t, test.baseURL, test.overrideURL)
-//
-//			md := testdata.GenerateLogsOneLogRecord()
-//			assert.NoError(t, exp.ConsumeLogs(context.Background(), md))
-//			require.Eventually(t, func() bool {
-//				return sink.LogRecordsCount() > 0
-//			}, 1*time.Second, 10*time.Millisecond)
-//			allLogs := sink.AllLogs()
-//			require.Len(t, allLogs, 1)
-//			assert.EqualValues(t, md, allLogs[0])
-//		})
-//	}
-//}
-
-func startTracesExporter(t *testing.T, baseURL string, overrideURL string) component.TracesExporter {
+func startTracesExporter(t *testing.T, baseURL string, overrideURL string, pipelineArn string, region string) component.TracesExporter {
 	factory := NewFactory()
 	cfg := createExporterConfig(baseURL, factory.CreateDefaultConfig())
 	cfg.TracesEndpoint = overrideURL
+	cfg.AWSAuthConfig = AWSAuthConfig{}
+	cfg.AWSAuthConfig.PipelineArn = pipelineArn
+	cfg.AWSAuthConfig.SigV4Config = SigV4Config{Region: region}
 	exp, err := factory.CreateTracesExporter(context.Background(), component.ExporterCreateParams{Logger: zap.NewNop()}, cfg)
-	require.NoError(t, err)
-	startAndCleanup(t, exp)
-	return exp
-}
-
-func startMetricsExporter(t *testing.T, baseURL string, overrideURL string) component.MetricsExporter {
-	factory := NewFactory()
-	cfg := createExporterConfig(baseURL, factory.CreateDefaultConfig())
-	cfg.MetricsEndpoint = overrideURL
-	exp, err := factory.CreateMetricsExporter(context.Background(), component.ExporterCreateParams{Logger: zap.NewNop()}, cfg)
-	require.NoError(t, err)
-	startAndCleanup(t, exp)
-	return exp
-}
-
-func startLogsExporter(t *testing.T, baseURL string, overrideURL string) component.LogsExporter {
-	factory := NewFactory()
-	cfg := createExporterConfig(baseURL, factory.CreateDefaultConfig())
-	cfg.LogsEndpoint = overrideURL
-	exp, err := factory.CreateLogsExporter(context.Background(), component.ExporterCreateParams{Logger: zap.NewNop()}, cfg)
 	require.NoError(t, err)
 	startAndCleanup(t, exp)
 	return exp
@@ -311,36 +136,11 @@ func createExporterConfig(baseURL string, defaultCfg config.Exporter) *Config {
 	return cfg
 }
 
-//func startTracesReceiver(t *testing.T, addr string, next consumer.Traces) {
-//	factory := otlpreceiver.NewFactory()
-//	cfg := createReceiverConfig(addr, factory.CreateDefaultConfig())
-//	recv, err := factory.CreateTracesReceiver(context.Background(), component.ReceiverCreateParams{Logger: zap.NewNop()}, cfg, next)
-//	require.NoError(t, err)
-//	startAndCleanup(t, recv)
-//}
-
-//func startMetricsReceiver(t *testing.T, addr string, next consumer.Metrics) {
-//	factory := otlpreceiver.NewFactory()
-//	cfg := createReceiverConfig(addr, factory.CreateDefaultConfig())
-//	recv, err := factory.CreateMetricsReceiver(context.Background(), component.ReceiverCreateParams{Logger: zap.NewNop()}, cfg, next)
-//	require.NoError(t, err)
-//	startAndCleanup(t, recv)
-//}
-
-//func startLogsReceiver(t *testing.T, addr string, next consumer.Logs) {
-//	factory := otlpreceiver.NewFactory()
-//	cfg := createReceiverConfig(addr, factory.CreateDefaultConfig())
-//	recv, err := factory.CreateLogsReceiver(context.Background(), component.ReceiverCreateParams{Logger: zap.NewNop()}, cfg, next)
-//	require.NoError(t, err)
-//	startAndCleanup(t, recv)
-//}
-
-//func createReceiverConfig(addr string, defaultCfg config.Receiver) *otlpreceiver.Config {
-//	cfg := defaultCfg.(*otlpreceiver.Config)
-//	cfg.HTTP.Endpoint = addr
-//	cfg.GRPC = nil
-//	return cfg
-//}
+func startTestHttpServer(t *testing.T, path string, handlerFunc func(w http.ResponseWriter, r *http.Request)) *httptest.Server {
+	router := http.NewServeMux()
+	router.HandleFunc(path, handlerFunc)
+	return httptest.NewServer(router)
+}
 
 func startAndCleanup(t *testing.T, cmp component.Component) {
 	require.NoError(t, cmp.Start(context.Background(), componenttest.NewNopHost()))
@@ -401,8 +201,8 @@ func TestErrorResponses(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			mux := http.NewServeMux()
-			mux.HandleFunc("/v1/traces", func(writer http.ResponseWriter, request *http.Request) {
+			serveMux := http.NewServeMux()
+			serveMux.HandleFunc("/v1/traces", func(writer http.ResponseWriter, request *http.Request) {
 				for k, v := range test.headers {
 					writer.Header().Add(k, v)
 				}
@@ -416,7 +216,7 @@ func TestErrorResponses(t *testing.T) {
 			})
 			srv := http.Server{
 				Addr:    addr,
-				Handler: mux,
+				Handler: serveMux,
 			}
 			ln, err := net.Listen("tcp", addr)
 			require.NoError(t, err)

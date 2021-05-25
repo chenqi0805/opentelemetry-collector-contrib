@@ -80,7 +80,15 @@ func TestLoadConfig(t *testing.T) {
 		expAWSExporterConfig.Endpoint = "accountId.dataprepper.us-east-1.es.aws.com"
 		expAWSExporterConfig.AWSAuthConfig = AWSAuthConfig{
 			PipelineArn: "arn:aws:es::123456789012:es/dataprepper/pipeline-name",
+			SigV4Config: SigV4Config{
+				Region: "us-east-1",
+				RoleArn: "arn:aws:iam::123456789012:role/test-role",
+			},
 		}
 		assert.Equal(t, awsExporter, expAWSExporterConfig)
 	})
+}
+
+func TestConfigValidateError(t *testing.T) {
+
 }

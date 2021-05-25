@@ -67,7 +67,6 @@ func TestTraceRoundTripOnlyBaseUrl(t *testing.T) {
 		assert.Equal(t, "application/protobuf", r.Header.Get("Content-Type"))
 	}
 	server := startTestHttpServer(t, "/v1/traces", handler)
-	defer server.Close()
 	exp := startTracesExporter(t, server.URL, "", "", "")
 	td := testdata.GenerateTracesOneSpan()
 	assert.NoError(t, exp.ConsumeTraces(context.Background(), td))
@@ -78,7 +77,6 @@ func TestTraceRoundTripWithTraceEndpoint(t *testing.T) {
 		assert.Equal(t, "application/protobuf", r.Header.Get("Content-Type"))
 	}
 	server := startTestHttpServer(t, "/custom/traces", handler)
-	defer server.Close()
 	exp := startTracesExporter(t, server.URL, server.URL + "/custom/traces", "", "")
 	td := testdata.GenerateTracesOneSpan()
 	assert.NoError(t, exp.ConsumeTraces(context.Background(), td))
@@ -90,7 +88,6 @@ func TestTraceRoundTripAWSEndpointNoSigV4(t *testing.T) {
 		assert.Equal(t, "123456789012-test-name.internal.dp.aes.com", r.Header.Get(headerDataPrepper))
 	}
 	server := startTestHttpServer(t, "/v1/traces", handler)
-	defer server.Close()
 	exp := startTracesExporter(t, server.URL, "", "arn:aws:es::123456789012:es/dataprepper/test-name", "")
 	td := testdata.GenerateTracesOneSpan()
 	assert.NoError(t, exp.ConsumeTraces(context.Background(), td))
@@ -99,7 +96,7 @@ func TestTraceRoundTripAWSEndpointNoSigV4(t *testing.T) {
 func TestTraceRoundTripAWSEndpointSigV4(t *testing.T) {
 	os.Setenv("AWS_ACCESS_KEY", "TEST_AWS_ACCESS_KEY")
 	os.Setenv("AWS_SECRET_ACCESS_KEY", "TEST_AWS_SECRET_ACCESS_KEY")
-	defer os.Clearenv()
+	t.Cleanup(os.Clearenv)
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "application/protobuf", r.Header.Get("Content-Type"))
 		assert.Equal(t, "123456789012-test-name.internal.dp.aes.com", r.Header.Get(headerDataPrepper))
@@ -109,7 +106,6 @@ func TestTraceRoundTripAWSEndpointSigV4(t *testing.T) {
 		assert.NoError(t, err)
 	}
 	server := startTestHttpServer(t, "/v1/traces", handler)
-	defer server.Close()
 	exp := startTracesExporter(t, server.URL, "", "arn:aws:es::123456789012:es/dataprepper/test-name", "us-east-1")
 	td := testdata.GenerateTracesOneSpan()
 	assert.NoError(t, exp.ConsumeTraces(context.Background(), td))
@@ -139,7 +135,9 @@ func createExporterConfig(baseURL string, defaultCfg config.Exporter) *Config {
 func startTestHttpServer(t *testing.T, path string, handlerFunc func(w http.ResponseWriter, r *http.Request)) *httptest.Server {
 	router := http.NewServeMux()
 	router.HandleFunc(path, handlerFunc)
-	return httptest.NewServer(router)
+	server := httptest.NewServer(router)
+	t.Cleanup(server.Close)
+	return server
 }
 
 func startAndCleanup(t *testing.T, cmp component.Component) {

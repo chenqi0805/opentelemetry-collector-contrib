@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -23,7 +22,6 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"go.opentelemetry.io/collector/config"
-	"go.opentelemetry.io/collector/config/configgrpc"
 	"go.opentelemetry.io/collector/consumer/consumererror"
 	"go.opentelemetry.io/collector/consumer/pdata"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
@@ -76,14 +74,6 @@ func newExporter(cfg config.Exporter, logger *zap.Logger) (*exporter, error) {
 	client, err := oCfg.HTTPClientSettings.ToClient()
 	if err != nil {
 		return nil, err
-	}
-
-	if oCfg.Compression != "" {
-		if strings.ToLower(oCfg.Compression) == configgrpc.CompressionGzip {
-			client.Transport = NewCompressRoundTripper(client.Transport)
-		} else {
-			return nil, fmt.Errorf("unsupported compression type %q", oCfg.Compression)
-		}
 	}
 
 	var signer *v4.Signer

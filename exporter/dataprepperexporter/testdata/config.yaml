@@ -28,7 +28,6 @@ exporters:
       "can you have a . here?": "F0000000-0000-0000-0000-000000000000"
       header1: 234
       another: "somevalue"
-    compression: gzip
   dataprepper/aws:
     endpoint: accountId.dataprepper.us-east-1.es.aws.com
     aws_auth:

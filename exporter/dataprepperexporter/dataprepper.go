@@ -32,8 +32,6 @@ type exporter struct {
 	config     *Config
 	client     *http.Client
 	tracesURL  string
-	metricsURL string
-	logsURL    string
 	logger     *zap.Logger
 	hasAWSAuth bool
 	hasSigV4   bool
@@ -101,23 +99,6 @@ func (e *exporter) pushTraceData(ctx context.Context, traces pdata.Traces) error
 	}
 
 	return e.export(ctx, e.tracesURL, request)
-}
-
-func (e *exporter) pushMetricsData(ctx context.Context, metrics pdata.Metrics) error {
-	request, err := metrics.ToOtlpProtoBytes()
-	if err != nil {
-		return consumererror.Permanent(err)
-	}
-	return e.export(ctx, e.metricsURL, request)
-}
-
-func (e *exporter) pushLogData(ctx context.Context, logs pdata.Logs) error {
-	request, err := logs.ToOtlpProtoBytes()
-	if err != nil {
-		return consumererror.Permanent(err)
-	}
-
-	return e.export(ctx, e.logsURL, request)
 }
 
 func (e *exporter) export(ctx context.Context, url string, request []byte) error {

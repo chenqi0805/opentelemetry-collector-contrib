@@ -23,9 +23,7 @@ func NewFactory() component.ExporterFactory {
 	return exporterhelper.NewFactory(
 		typeStr,
 		createDefaultConfig,
-		exporterhelper.WithTraces(createTracesExporter),
-		exporterhelper.WithMetrics(createMetricsExporter),
-		exporterhelper.WithLogs(createLogsExporter))
+		exporterhelper.WithTraces(createTracesExporter))
 }
 
 func createDefaultConfig() config.Exporter {
@@ -78,60 +76,6 @@ func createTracesExporter(
 		cfg,
 		params.Logger,
 		oce.pushTraceData,
-		exporterhelper.WithCapabilities(consumer.Capabilities{MutatesData: false}),
-		// explicitly disable since we rely on http.Client timeout logic.
-		exporterhelper.WithTimeout(exporterhelper.TimeoutSettings{Timeout: 0}),
-		exporterhelper.WithRetry(oCfg.RetrySettings),
-		exporterhelper.WithQueue(oCfg.QueueSettings))
-}
-
-func createMetricsExporter(
-	_ context.Context,
-	params component.ExporterCreateParams,
-	cfg config.Exporter,
-) (component.MetricsExporter, error) {
-	oce, err := newExporter(cfg, params.Logger)
-	if err != nil {
-		return nil, err
-	}
-	oCfg := cfg.(*Config)
-
-	oce.metricsURL, err = composeSignalURL(oCfg, oCfg.MetricsEndpoint, "metrics")
-	if err != nil {
-		return nil, err
-	}
-
-	return exporterhelper.NewMetricsExporter(
-		cfg,
-		params.Logger,
-		oce.pushMetricsData,
-		exporterhelper.WithCapabilities(consumer.Capabilities{MutatesData: false}),
-		// explicitly disable since we rely on http.Client timeout logic.
-		exporterhelper.WithTimeout(exporterhelper.TimeoutSettings{Timeout: 0}),
-		exporterhelper.WithRetry(oCfg.RetrySettings),
-		exporterhelper.WithQueue(oCfg.QueueSettings))
-}
-
-func createLogsExporter(
-	_ context.Context,
-	params component.ExporterCreateParams,
-	cfg config.Exporter,
-) (component.LogsExporter, error) {
-	oce, err := newExporter(cfg, params.Logger)
-	if err != nil {
-		return nil, err
-	}
-	oCfg := cfg.(*Config)
-
-	oce.logsURL, err = composeSignalURL(oCfg, oCfg.LogsEndpoint, "logs")
-	if err != nil {
-		return nil, err
-	}
-
-	return exporterhelper.NewLogsExporter(
-		cfg,
-		params.Logger,
-		oce.pushLogData,
 		exporterhelper.WithCapabilities(consumer.Capabilities{MutatesData: false}),
 		// explicitly disable since we rely on http.Client timeout logic.
 		exporterhelper.WithTimeout(exporterhelper.TimeoutSettings{Timeout: 0}),

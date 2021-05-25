@@ -32,12 +32,6 @@ type Config struct {
 	// The URL to send traces to. If omitted the Endpoint + "/v1/traces" will be used.
 	TracesEndpoint string `mapstructure:"traces_endpoint"`
 
-	// The URL to send metrics to. If omitted the Endpoint + "/v1/metrics" will be used.
-	MetricsEndpoint string `mapstructure:"metrics_endpoint"`
-
-	// The URL to send logs to. If omitted the Endpoint + "/v1/logs" will be used.
-	LogsEndpoint string `mapstructure:"logs_endpoint"`
-
 	AWSAuthConfig AWSAuthConfig `mapstructure:"aws_auth"`
 }
 

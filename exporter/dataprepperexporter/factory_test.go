@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
 	"go.opentelemetry.io/collector/component"
@@ -31,17 +30,6 @@ func TestCreateDefaultConfig(t *testing.T) {
 	assert.Equal(t, ocfg.RetrySettings.InitialInterval, 5*time.Second, "default retry InitialInterval")
 	assert.Equal(t, ocfg.RetrySettings.MaxInterval, 30*time.Second, "default retry MaxInterval")
 	assert.Equal(t, ocfg.QueueSettings.Enabled, true, "default sending queue is enabled")
-}
-
-func TestCreateMetricsExporter(t *testing.T) {
-	factory := NewFactory()
-	cfg := factory.CreateDefaultConfig().(*Config)
-	cfg.HTTPClientSettings.Endpoint = "http://" + testutil.GetAvailableLocalAddress(t)
-
-	creationParams := component.ExporterCreateParams{Logger: zap.NewNop()}
-	oexp, err := factory.CreateMetricsExporter(context.Background(), creationParams, cfg)
-	require.Nil(t, err)
-	require.NotNil(t, oexp)
 }
 
 func TestCreateTracesExporter(t *testing.T) {
@@ -139,15 +127,4 @@ func TestCreateTracesExporter(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestCreateLogsExporter(t *testing.T) {
-	factory := NewFactory()
-	cfg := factory.CreateDefaultConfig().(*Config)
-	cfg.HTTPClientSettings.Endpoint = "http://" + testutil.GetAvailableLocalAddress(t)
-
-	creationParams := component.ExporterCreateParams{Logger: zap.NewNop()}
-	oexp, err := factory.CreateLogsExporter(context.Background(), creationParams, cfg)
-	require.Nil(t, err)
-	require.NotNil(t, oexp)
 }

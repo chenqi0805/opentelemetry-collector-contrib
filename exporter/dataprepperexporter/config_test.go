@@ -90,5 +90,43 @@ func TestLoadConfig(t *testing.T) {
 }
 
 func TestConfigValidateError(t *testing.T) {
+	factory := NewFactory()
 
+	tests := []struct {
+		name        string
+		pipelineArn string
+		region      string
+		roleArn     string
+	}{
+		{
+			name: "Invalid pipelineArn",
+			pipelineArn: "arn:",
+		},
+		{
+			name: "Invalid roleArn",
+			pipelineArn: "arn:aws:es::123456789012:es/dataprepper/pipeline-name",
+			region: "us-east-1",
+			roleArn: "arn:",
+		},
+		{
+			name: "Missing region",
+			pipelineArn: "arn:aws:es::123456789012:es/dataprepper/pipeline-name",
+			roleArn: "arn:aws:iam::123456789012:role/test-role",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := factory.CreateDefaultConfig().(*Config)
+			cfg.AWSAuthConfig = AWSAuthConfig{
+				PipelineArn: test.pipelineArn,
+				SigV4Config: SigV4Config{
+					Region: test.region,
+					RoleArn: test.roleArn,
+				},
+			}
+
+			assert.Error(t, cfg.Validate())
+		})
+	}
 }

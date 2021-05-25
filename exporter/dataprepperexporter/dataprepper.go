@@ -5,7 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
+	"github.com/aws/aws-sdk-go/aws/session"
 	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
 	"io"
 	"io/ioutil"
@@ -38,6 +41,7 @@ type exporter struct {
 	hasSigV4   bool
 	header     string
 	region     string
+	signer     *v4.Signer
 }
 
 const (
@@ -45,11 +49,6 @@ const (
 	maxHTTPResponseReadBytes = 64 * 1024
 	headerDataPrepper        = "x-amz-es-dp-internal"
 	service                  = "es"
-)
-
-var (
-	awsCredentials = credentials.NewEnvCredentials()
-	signer         = v4.NewSigner(awsCredentials)
 )
 
 // Crete new exporter.
@@ -87,6 +86,12 @@ func newExporter(cfg config.Exporter, logger *zap.Logger) (*exporter, error) {
 		}
 	}
 
+	var signer *v4.Signer
+	if hasSigV4 {
+		res := v4.NewSigner(getCredsFromConfig(oCfg.AWSAuthConfig.SigV4Config))
+		signer = res
+	}
+
 	return &exporter{
 		config: oCfg,
 		client: client,
@@ -95,6 +100,7 @@ func newExporter(cfg config.Exporter, logger *zap.Logger) (*exporter, error) {
 		hasSigV4: hasSigV4,
 		header: header,
 		region: oCfg.AWSAuthConfig.SigV4Config.Region,
+		signer: signer,
 	}, nil
 }
 
@@ -135,7 +141,7 @@ func (e *exporter) export(ctx context.Context, url string, request []byte) error
 	if e.hasAWSAuth {
 		req.Header.Set(headerDataPrepper, e.header)
 		if e.hasSigV4 {
-			_, err = signer.Sign(req, body, service, e.region, time.Now())
+			_, err = e.signer.Sign(req, body, service, e.region, time.Now())
 			if err != nil {
 				return fmt.Errorf("failed to sign an HTTP request: #{err}")
 			}
@@ -194,6 +200,16 @@ func (e *exporter) export(ctx context.Context, url string, request []byte) error
 
 	// All other errors are retryable, so don't wrap them in consumererror.Permanent().
 	return formattedErr
+}
+
+func getCredsFromConfig(v4Config SigV4Config) *credentials.Credentials {
+	sess := session.Must(session.NewSessionWithOptions(session.Options{
+		Config: aws.Config{Region: aws.String(v4Config.Region)},
+	}))
+	if v4Config.RoleArn != "" {
+		return stscreds.NewCredentials(sess, v4Config.RoleArn)
+	}
+	return sess.Config.Credentials
 }
 
 // Read the response and decode the status.Status from the body.

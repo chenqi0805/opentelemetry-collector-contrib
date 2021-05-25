@@ -1,6 +1,7 @@
 package dataprepperexporter
 
 import (
+	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws/arn"
 	"go.opentelemetry.io/collector/config"
@@ -65,6 +66,14 @@ func HasSigV4(awsAuthConfig AWSAuthConfig) bool {
 }
 
 func (sigV4Config SigV4Config) Validate() error {
+	// TODO: list all valid regions
+	if sigV4Config.Region == "" {
+		return errors.New("region cannot be empty")
+	}
+	var roleArn = sigV4Config.RoleArn
+	if roleArn != "" && !arn.IsARN(roleArn) {
+		return fmt.Errorf("invalid role_arn: %s", roleArn)
+	}
 	return nil
 }
 

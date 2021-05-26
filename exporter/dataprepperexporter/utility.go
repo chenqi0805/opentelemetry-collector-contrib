@@ -2,8 +2,9 @@ package dataprepperexporter
 
 import (
 	"fmt"
-	"github.com/aws/aws-sdk-go/aws/arn"
 	"strings"
+
+	"github.com/aws/aws-sdk-go/aws/arn"
 )
 
 func getDataPrepperHeader(pipelineArn string) (string, error) {

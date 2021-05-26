@@ -3,8 +3,6 @@ package dataprepperexporter
 import (
 	"context"
 	"fmt"
-	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
-	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/dataprepperexporter/testdata"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -12,13 +10,10 @@ import (
 	"testing"
 	"time"
 
+	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/dataprepperexporter/testdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
-
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/config"
@@ -27,6 +22,10 @@ import (
 	"go.opentelemetry.io/collector/consumer/pdata"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
 	"go.opentelemetry.io/collector/testutil"
+	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestInvalidConfig(t *testing.T) {

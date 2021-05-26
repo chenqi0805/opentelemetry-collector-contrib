@@ -1,8 +1,9 @@
 package testdata
 
 import (
-	"go.opentelemetry.io/collector/consumer/pdata"
 	"time"
+
+	"go.opentelemetry.io/collector/consumer/pdata"
 )
 
 var (

@@ -3,6 +3,7 @@ package dataprepperexporter
 import (
 	"errors"
 	"fmt"
+
 	"github.com/aws/aws-sdk-go/aws/arn"
 	"go.opentelemetry.io/collector/config"
 	"go.opentelemetry.io/collector/config/confighttp"

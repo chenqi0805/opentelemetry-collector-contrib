@@ -18,7 +18,7 @@ const (
 	typeStr = "dataprepper"
 )
 
-// NewFactory creates a factory for OTLP exporter.
+// NewFactory creates a factory for data-prepper exporter.
 func NewFactory() component.ExporterFactory {
 	return exporterhelper.NewFactory(
 		typeStr,

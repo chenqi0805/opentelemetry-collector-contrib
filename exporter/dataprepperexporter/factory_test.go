@@ -119,7 +119,7 @@ func TestCreateTracesExporter(t *testing.T) {
 
 				err = consumer.Shutdown(context.Background())
 				if err != nil {
-					// Since the endpoint of OTLP exporter doesn't actually exist,
+					// Since the endpoint of data-prepper exporter doesn't actually exist,
 					// exporter may already stop because it cannot connect.
 					assert.Equal(t, err.Error(), "rpc error: code = Canceled desc = grpc: the client connection is closing")
 				}

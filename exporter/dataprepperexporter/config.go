@@ -19,21 +19,21 @@ type SigV4Config struct {
 }
 
 type AWSAuthConfig struct {
-	PipelineArn string `mapstructure:"pipeline_arn"`
 	SigV4Config SigV4Config `mapstructure:"sigv4"`
+	// Pipeline ARN for http request header
+	PipelineArn string `mapstructure:"pipeline_arn"`
 }
 
-// Config defines configuration for OTLP/HTTP exporter.
+// Config defines configuration for data-prepper exporter.
 type Config struct {
 	config.ExporterSettings       `mapstructure:",squash"` // squash ensures fields are correctly decoded in embedded struct
 	confighttp.HTTPClientSettings `mapstructure:",squash"` // squash ensures fields are correctly decoded in embedded struct.
 	exporterhelper.QueueSettings  `mapstructure:"sending_queue"`
 	exporterhelper.RetrySettings  `mapstructure:"retry_on_failure"`
 
+	AWSAuthConfig AWSAuthConfig `mapstructure:"aws_auth"`
 	// The URL to send traces to. If omitted the Endpoint + "/v1/traces" will be used.
 	TracesEndpoint string `mapstructure:"traces_endpoint"`
-
-	AWSAuthConfig AWSAuthConfig `mapstructure:"aws_auth"`
 }
 
 var _ config.Exporter = (*Config)(nil)

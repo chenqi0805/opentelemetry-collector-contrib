@@ -84,10 +84,10 @@ func TestTraceRoundTripWithTraceEndpoint(t *testing.T) {
 func TestTraceRoundTripAWSEndpointNoSigV4(t *testing.T) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "application/protobuf", r.Header.Get("Content-Type"))
-		assert.Equal(t, "123456789012-test-name.internal.dp.aes.com", r.Header.Get(headerDataPrepper))
+		assert.Equal(t, "test-name", r.Header.Get(headerDataPrepper))
 	}
 	server := startTestHttpServer(t, "/v1/traces", handler)
-	exp := startTracesExporter(t, server.URL, "", "arn:aws:es::123456789012:es/dataprepper/test-name", "")
+	exp := startTracesExporter(t, server.URL, "", "test-name", "")
 	td := testdata.GenerateTracesOneSpan()
 	assert.NoError(t, exp.ConsumeTraces(context.Background(), td))
 }
@@ -98,24 +98,24 @@ func TestTraceRoundTripAWSEndpointSigV4(t *testing.T) {
 	t.Cleanup(os.Clearenv)
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "application/protobuf", r.Header.Get("Content-Type"))
-		assert.Equal(t, "123456789012-test-name.internal.dp.aes.com", r.Header.Get(headerDataPrepper))
+		assert.Equal(t, "test-name", r.Header.Get(headerDataPrepper))
 		authStr := r.Header.Get("Authorization")
 		assert.Contains(t, authStr, "Credential=TEST_AWS_ACCESS_KEY")
 		_, err := v4.GetSignedRequestSignature(r)
 		assert.NoError(t, err)
 	}
 	server := startTestHttpServer(t, "/v1/traces", handler)
-	exp := startTracesExporter(t, server.URL, "", "arn:aws:es::123456789012:es/dataprepper/test-name", "us-east-1")
+	exp := startTracesExporter(t, server.URL, "", "test-name", "us-east-1")
 	td := testdata.GenerateTracesOneSpan()
 	assert.NoError(t, exp.ConsumeTraces(context.Background(), td))
 }
 
-func startTracesExporter(t *testing.T, baseURL string, overrideURL string, pipelineArn string, region string) component.TracesExporter {
+func startTracesExporter(t *testing.T, baseURL string, overrideURL string, pipelineName string, region string) component.TracesExporter {
 	factory := NewFactory()
 	cfg := createExporterConfig(baseURL, factory.CreateDefaultConfig())
 	cfg.TracesEndpoint = overrideURL
 	cfg.AWSAuthConfig = AWSAuthConfig{}
-	cfg.AWSAuthConfig.PipelineArn = pipelineArn
+	cfg.AWSAuthConfig.PipelineName = pipelineName
 	cfg.AWSAuthConfig.SigV4Config = SigV4Config{Region: region}
 	exp, err := factory.CreateTracesExporter(context.Background(), component.ExporterCreateParams{Logger: zap.NewNop()}, cfg)
 	require.NoError(t, err)

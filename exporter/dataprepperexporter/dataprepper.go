@@ -61,11 +61,7 @@ func newExporter(cfg config.Exporter, logger *zap.Logger) (*exporter, error) {
 	hasSigV4 := HasSigV4(oCfg.AWSAuthConfig)
 	header := ""
 	if hasAWSAuth {
-		res, err := getDataPrepperHeader(oCfg.AWSAuthConfig.PipelineArn)
-		if err != nil {
-			return nil, err
-		}
-		header = res
+		header = oCfg.AWSAuthConfig.PipelineName
 	}
 
 	client, err := oCfg.HTTPClientSettings.ToClient()

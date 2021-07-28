@@ -101,6 +101,7 @@ func TestTraceRoundTripAWSEndpointSigV4(t *testing.T) {
 		assert.Equal(t, "test-name", r.Header.Get(headerDataPrepper))
 		authStr := r.Header.Get("Authorization")
 		assert.Contains(t, authStr, "Credential=TEST_AWS_ACCESS_KEY")
+		assert.Contains(t, authStr, "SignedHeaders=host;x-amz-date")
 		_, err := v4.GetSignedRequestSignature(r)
 		assert.NoError(t, err)
 	}

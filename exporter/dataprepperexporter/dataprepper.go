@@ -103,16 +103,18 @@ func (e *exporter) export(ctx context.Context, url string, request []byte) error
 	if err != nil {
 		return consumererror.Permanent(err)
 	}
-	req.Header.Set("Content-Type", "application/protobuf")
 	if e.hasAWSAuth {
-		req.Header.Set(headerDataPrepper, e.header)
 		if e.hasSigV4 {
 			_, err = e.signer.Sign(req, body, service, e.region, time.Now())
 			if err != nil {
-				return fmt.Errorf("failed to sign an HTTP request: #{err}")
+				return fmt.Errorf("failed to sign an HTTP request: %w", err)
 			}
 		}
+		// additional header needs to be added after signing
+		req.Header.Set(headerDataPrepper, e.header)
 	}
+	// additional header needs to be added after signing
+	req.Header.Set("Content-Type", "application/protobuf")
 
 	resp, err := e.client.Do(req)
 	if err != nil {

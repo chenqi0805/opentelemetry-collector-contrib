@@ -72,6 +72,7 @@ func newExporter(cfg config.Exporter, logger *zap.Logger) (*exporter, error) {
 	var signer *v4.Signer
 	if hasSigV4 {
 		res := v4.NewSigner(getCredsFromConfig(oCfg.AWSAuthConfig.SigV4Config))
+		v4.WithUnsignedPayload(res)
 		signer = res
 	}
 

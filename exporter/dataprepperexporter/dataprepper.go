@@ -72,6 +72,9 @@ func newExporter(cfg config.Exporter, logger *zap.Logger) (*exporter, error) {
 	var signer *v4.Signer
 	if hasSigV4 {
 		res := v4.NewSigner(getCredsFromConfig(oCfg.AWSAuthConfig.SigV4Config))
+		// The aws data-prepper auth model requires the setting of the 'amz-content-sha256' header and
+		// because of constraints in the aws-sdk-go library this won't be set unless the unsigned payload flag is
+		// explicitly set.
 		v4.WithUnsignedPayload(res)
 		signer = res
 	}

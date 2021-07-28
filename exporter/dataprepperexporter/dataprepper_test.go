@@ -97,11 +97,12 @@ func TestTraceRoundTripAWSEndpointSigV4(t *testing.T) {
 	os.Setenv("AWS_SECRET_ACCESS_KEY", "TEST_AWS_SECRET_ACCESS_KEY")
 	t.Cleanup(os.Clearenv)
 	handler := func(w http.ResponseWriter, r *http.Request) {
+		assert.Contains(t, r.Header, "X-Amz-Content-Sha256")
 		assert.Equal(t, "application/protobuf", r.Header.Get("Content-Type"))
 		assert.Equal(t, "test-name", r.Header.Get(headerDataPrepper))
 		authStr := r.Header.Get("Authorization")
 		assert.Contains(t, authStr, "Credential=TEST_AWS_ACCESS_KEY")
-		assert.Contains(t, authStr, "SignedHeaders=host;x-amz-date")
+		assert.Contains(t, authStr, "SignedHeaders=host;x-amz-content-sha256;x-amz-date")
 		_, err := v4.GetSignedRequestSignature(r)
 		assert.NoError(t, err)
 	}

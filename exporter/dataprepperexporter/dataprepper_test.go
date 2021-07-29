@@ -88,7 +88,7 @@ func TestTraceRoundTripAWSEndpointNoSigV4(t *testing.T) {
 		assert.Equal(t, "123456789012.ingest.us-east-1.amazonaws.com", r.Host)
 	}
 	server := startTestHttpServer(t, "/v1/traces", handler)
-	exp := startTracesExporter(t, server.URL, "", "arn:aws:es:us-east-1:123456789012:es/dataprepper/test-name", "")
+	exp := startTracesExporter(t, server.URL, "", "arn:aws:es:us-east-1:123456789012:pipeline/test-name", "")
 	td := testdata.GenerateTracesOneSpan()
 	assert.NoError(t, exp.ConsumeTraces(context.Background(), td))
 }
@@ -109,7 +109,7 @@ func TestTraceRoundTripAWSEndpointSigV4(t *testing.T) {
 		assert.NoError(t, err)
 	}
 	server := startTestHttpServer(t, "/v1/traces", handler)
-	exp := startTracesExporter(t, server.URL, "", "arn:aws:es:us-east-1:123456789012:es/dataprepper/test-name", "us-east-1")
+	exp := startTracesExporter(t, server.URL, "", "arn:aws:es:us-east-1:123456789012:pipeline/test-name", "us-east-1")
 	td := testdata.GenerateTracesOneSpan()
 	assert.NoError(t, exp.ConsumeTraces(context.Background(), td))
 }

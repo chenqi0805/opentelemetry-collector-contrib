@@ -79,7 +79,7 @@ func TestLoadConfig(t *testing.T) {
 		expAWSExporterConfig.ExporterSettings = config.NewExporterSettings(config.NewIDWithName(typeStr, "aws"))
 		expAWSExporterConfig.Endpoint = "accountId.dataprepper.us-east-1.es.aws.com"
 		expAWSExporterConfig.AWSAuthConfig = AWSAuthConfig{
-			PipelineArn: "arn:aws:es::123456789012:es/dataprepper/pipeline-name",
+			PipelineArn: "arn:aws:es:us-east-1:123456789012:pipeline/pipeline-name",
 			SigV4Config: SigV4Config{
 				Region: "us-east-1",
 				RoleArn: "arn:aws:iam::123456789012:role/test-role",
@@ -104,13 +104,13 @@ func TestConfigValidateError(t *testing.T) {
 		},
 		{
 			name: "Invalid roleArn",
-			pipelineArn: "arn:aws:es::123456789012:es/dataprepper/pipeline-name",
+			pipelineArn: "arn:aws:es:us-east-1:123456789012:pipeline/pipeline-name",
 			region: "us-east-1",
 			roleArn: "arn:",
 		},
 		{
 			name: "Missing region",
-			pipelineArn: "arn:aws:es::123456789012:es/dataprepper/pipeline-name",
+			pipelineArn: "arn:aws:es:us-east-1:123456789012:pipeline/pipeline-name",
 			roleArn: "arn:aws:iam::123456789012:role/test-role",
 		},
 	}

@@ -42,7 +42,7 @@ type exporter struct {
 const (
 	headerRetryAfter         = "Retry-After"
 	maxHTTPResponseReadBytes = 64 * 1024
-	headerDataPrepper        = "x-amz-es-dp-internal"
+	headerDataPrepper        = "x-amz-es-ingest-internal"
 	service                  = "es"
 )
 

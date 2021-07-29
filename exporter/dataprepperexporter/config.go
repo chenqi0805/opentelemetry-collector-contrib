@@ -20,8 +20,8 @@ type SigV4Config struct {
 
 type AWSAuthConfig struct {
 	SigV4Config SigV4Config `mapstructure:"sigv4"`
-	// Pipeline name for http request header
-	PipelineName string `mapstructure:"pipeline_name"`
+	// Pipeline ARN for http request header
+	PipelineArn string `mapstructure:"pipeline_arn"`
 }
 
 // Config defines configuration for data-prepper exporter.
@@ -69,8 +69,9 @@ func (sigV4Config SigV4Config) Validate() error {
 }
 
 func (awsAuth AWSAuthConfig) Validate() error {
-	if awsAuth.PipelineName == "" {
-		return fmt.Errorf("pipeline_name cannot be empty")
+	var pipelineArn = awsAuth.PipelineArn
+	if !arn.IsARN(pipelineArn) {
+		return fmt.Errorf("invalid pipeline_arn: %s", pipelineArn)
 	}
 	if HasSigV4(awsAuth) {
 		if err := awsAuth.SigV4Config.Validate(); err != nil {

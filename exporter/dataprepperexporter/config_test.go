@@ -79,7 +79,7 @@ func TestLoadConfig(t *testing.T) {
 		expAWSExporterConfig.ExporterSettings = config.NewExporterSettings(config.NewIDWithName(typeStr, "aws"))
 		expAWSExporterConfig.Endpoint = "accountId.dataprepper.us-east-1.es.aws.com"
 		expAWSExporterConfig.AWSAuthConfig = AWSAuthConfig{
-			PipelineArn: "arn:aws:es:us-east-1:123456789012:pipeline/pipeline-name",
+			PipelineName: "pipeline-name",
 			SigV4Config: SigV4Config{
 				Region: "us-east-1",
 				RoleArn: "arn:aws:iam::123456789012:role/test-role",
@@ -94,23 +94,24 @@ func TestConfigValidateError(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		pipelineArn string
+		pipelineName string
 		region      string
 		roleArn     string
 	}{
 		{
-			name: "Invalid pipelineArn",
-			pipelineArn: "arn:",
+			name: "Missing pipelineName",
+			region: "us-east-1",
+			roleArn: "arn:aws:iam::123456789012:role/test-role",
 		},
 		{
 			name: "Invalid roleArn",
-			pipelineArn: "arn:aws:es:us-east-1:123456789012:pipeline/pipeline-name",
+			pipelineName: "pipeline-name",
 			region: "us-east-1",
 			roleArn: "arn:",
 		},
 		{
 			name: "Missing region",
-			pipelineArn: "arn:aws:es:us-east-1:123456789012:pipeline/pipeline-name",
+			pipelineName: "pipeline-name",
 			roleArn: "arn:aws:iam::123456789012:role/test-role",
 		},
 	}
@@ -119,7 +120,7 @@ func TestConfigValidateError(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := factory.CreateDefaultConfig().(*Config)
 			cfg.AWSAuthConfig = AWSAuthConfig{
-				PipelineArn: test.pipelineArn,
+				PipelineName: test.pipelineName,
 				SigV4Config: SigV4Config{
 					Region: test.region,
 					RoleArn: test.roleArn,

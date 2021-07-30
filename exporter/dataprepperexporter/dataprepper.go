@@ -34,8 +34,7 @@ type exporter struct {
 	logger     *zap.Logger
 	hasAWSAuth bool
 	hasSigV4   bool
-	dpHeader     string
-	hostHeader string
+	header     string
 	region     string
 	signer     *v4.Signer
 }
@@ -60,19 +59,9 @@ func newExporter(cfg config.Exporter, logger *zap.Logger) (*exporter, error) {
 
 	hasAWSAuth := HasAWSAuth(*oCfg)
 	hasSigV4 := HasSigV4(oCfg.AWSAuthConfig)
-	dpHeader := ""
-	hostHeader := ""
+	header := ""
 	if hasAWSAuth {
-		res, err := getDataPrepperHeader(oCfg.AWSAuthConfig.PipelineArn)
-		if err != nil {
-			return nil, err
-		}
-		dpHeader = res
-		res, err = getHostHeader(oCfg.AWSAuthConfig.PipelineArn)
-		if err != nil {
-			return nil, err
-		}
-		hostHeader = res
+		header = oCfg.AWSAuthConfig.PipelineName
 	}
 
 	client, err := oCfg.HTTPClientSettings.ToClient()
@@ -96,8 +85,7 @@ func newExporter(cfg config.Exporter, logger *zap.Logger) (*exporter, error) {
 		logger: logger,
 		hasAWSAuth: hasAWSAuth,
 		hasSigV4: hasSigV4,
-		dpHeader: dpHeader,
-		hostHeader: hostHeader,
+		header: header,
 		region: oCfg.AWSAuthConfig.SigV4Config.Region,
 		signer: signer,
 	}, nil
@@ -120,7 +108,6 @@ func (e *exporter) export(ctx context.Context, url string, request []byte) error
 		return consumererror.Permanent(err)
 	}
 	if e.hasAWSAuth {
-		req.Host = e.hostHeader
 		if e.hasSigV4 {
 			_, err = e.signer.Sign(req, body, service, e.region, time.Now())
 			if err != nil {
@@ -128,7 +115,7 @@ func (e *exporter) export(ctx context.Context, url string, request []byte) error
 			}
 		}
 		// additional header needs to be added after signing
-		req.Header.Set(headerDataPrepper, e.dpHeader)
+		req.Header.Set(headerDataPrepper, e.header)
 	}
 	// additional header needs to be added after signing
 	req.Header.Set("Content-Type", "application/protobuf")

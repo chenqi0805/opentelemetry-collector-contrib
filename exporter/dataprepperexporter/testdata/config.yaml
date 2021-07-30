@@ -31,7 +31,7 @@ exporters:
   dataprepper/aws:
     endpoint: accountId.dataprepper.us-east-1.es.aws.com
     aws_auth:
-      pipeline_arn: arn:aws:es:us-east-1:123456789012:pipeline/pipeline-name
+      pipeline_name: pipeline-name
       sigv4:
         region: "us-east-1"
         role_arn: "arn:aws:iam::123456789012:role/test-role"

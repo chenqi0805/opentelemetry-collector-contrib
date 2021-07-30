@@ -15,6 +15,7 @@
 package main
 
 import (
+	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/dataprepperexporter"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/service/defaultcomponents"
 
@@ -176,6 +177,7 @@ func components() (component.Factories, error) {
 		splunkhecexporter.NewFactory(),
 		stackdriverexporter.NewFactory(),
 		sumologicexporter.NewFactory(),
+		dataprepperexporter.NewFactory(),
 	}
 	for _, exp := range factories.Exporters {
 		exporters = append(exporters, exp)

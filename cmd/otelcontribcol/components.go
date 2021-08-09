@@ -179,7 +179,7 @@ func components() (component.Factories, error) {
 		stackdriverexporter.NewFactory(),
 		sumologicexporter.NewFactory(),
 		tanzuobservabilityexporter.NewFactory(),
-		dataprepperexporter.NewFactory()
+		dataprepperexporter.NewFactory(),
 	}
 	for _, exp := range factories.Exporters {
 		exporters = append(exporters, exp)

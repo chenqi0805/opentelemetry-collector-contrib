@@ -13,3 +13,5 @@ require (
 	go.uber.org/zap v1.18.1
 	google.golang.org/protobuf v1.27.1
 )
+
+replace github.com/StackExchange/wmi v1.2.0 => github.com/StackExchange/wmi v1.2.1-0.20210723131906-441642c16659

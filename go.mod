@@ -79,6 +79,8 @@ require (
 // Replace references to modules that are in this repository with their relateive paths
 // so that we always build with current (latest) version of the source code.
 
+replace github.com/StackExchange/wmi v1.2.0 => github.com/StackExchange/wmi v1.2.1-0.20210723131906-441642c16659
+
 replace github.com/open-telemetry/opentelemetry-collector-contrib/internal/common => ./internal/common
 
 replace github.com/open-telemetry/opentelemetry-collector-contrib/internal/splunk => ./internal/splunk
